@@ -1,0 +1,1 @@
+const express=require('express');const auth=require('../middleware/authMiddleware');const c=require('../controllers/addressController');const r=express.Router();r.get('/',auth,c.getAddresses);r.post('/',auth,c.saveAddress);r.put('/:id',auth,c.saveAddress);r.delete('/:id',auth,c.deleteAddress);module.exports=r;

@@ -1,0 +1,5 @@
+const {pool}=require('../config/database');
+async function list(req,res){try{const [r]=await pool.execute('SELECT id,title,message,is_read,created_at FROM notifications WHERE user_id=? ORDER BY created_at DESC LIMIT 50',[req.user.id]);res.json({success:true,data:r});}catch(e){res.status(500).json({success:false,message:'Gagal mengambil notifikasi.',error:e.message});}}
+async function read(req,res){try{await pool.execute('UPDATE notifications SET is_read=1 WHERE id=? AND user_id=?',[req.params.id,req.user.id]);res.json({success:true,message:'Notifikasi ditandai sudah dibaca.'});}catch(e){res.status(500).json({success:false,message:'Gagal memperbarui notifikasi.',error:e.message});}}
+async function readAll(req,res){try{await pool.execute('UPDATE notifications SET is_read=1 WHERE user_id=?',[req.user.id]);res.json({success:true,message:'Semua notifikasi sudah dibaca.'});}catch(e){res.status(500).json({success:false,message:'Gagal memperbarui notifikasi.',error:e.message});}}
+module.exports={list,read,readAll};

@@ -1,0 +1,1 @@
+const express=require('express');const auth=require('../middleware/authMiddleware');const c=require('../controllers/cartController');const r=express.Router();r.get('/',auth,c.getCart);r.post('/',auth,c.addToCart);r.patch('/:id',auth,c.updateCart);r.delete('/:id',auth,c.removeFromCart);r.patch('/select-all',auth,c.selectAll);module.exports=r;

@@ -1,0 +1,1 @@
+const express=require('express');const auth=require('../middleware/authMiddleware');const c=require('../controllers/walletController');const r=express.Router();r.get('/',auth,c.getBalance);r.get('/transactions',auth,c.transactions);r.post('/topup',auth,c.topup);module.exports=r;

@@ -1,0 +1,1 @@
+const express=require('express');const auth=require('../middleware/authMiddleware');const c=require('../controllers/categoryController');const r=express.Router();r.get('/',c.getCategories);r.post('/',auth,c.createCategory);module.exports=r;

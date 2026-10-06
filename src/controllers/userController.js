@@ -1,0 +1,4 @@
+const {pool}=require('../config/database');
+async function getProfile(req,res){try{const [r]=await pool.execute('SELECT id,name,email,phone,role,wallet_balance,created_at FROM users WHERE id=?',[req.user.id]);if(!r.length)return res.status(404).json({success:false,message:'User tidak ditemukan.'});r[0].wallet_balance=Number(r[0].wallet_balance);res.json({success:true,data:r[0]});}catch(e){res.status(500).json({success:false,message:'Gagal mengambil profile.',error:e.message});}}
+async function updateProfile(req,res){try{const {name,phone}=req.body;if(!name)return res.status(400).json({success:false,message:'Nama wajib diisi.'});await pool.execute('UPDATE users SET name=?,phone=? WHERE id=?',[name.trim(),phone?.trim()||null,req.user.id]);res.json({success:true,message:'Profile berhasil diperbarui.'});}catch(e){res.status(500).json({success:false,message:'Gagal memperbarui profile.',error:e.message});}}
+module.exports={getProfile,updateProfile};

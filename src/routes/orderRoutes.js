@@ -1,0 +1,1 @@
+const express=require('express');const auth=require('../middleware/authMiddleware');const c=require('../controllers/orderController');const r=express.Router();r.get('/',auth,c.getOrders);r.get('/:id',auth,c.getOrderById);r.post('/',auth,c.createOrder);r.patch('/:id/status',auth,c.updateOrderStatus);module.exports=r;

@@ -1,0 +1,1 @@
+const express=require('express');const upload=require('../middleware/uploadMiddleware');const auth=require('../middleware/authMiddleware');const c=require('../controllers/aiController');const r=express.Router();r.post('/product-description',auth,upload.single('image'),c.generateProduct);module.exports=r;

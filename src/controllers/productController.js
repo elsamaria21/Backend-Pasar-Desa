@@ -1,69 +1,332 @@
-const { pool } = require('../config/database');
-const fs=require('fs');
+const {
+  pool,
+} = require("../config/database");
 
-function mapProduct(p, req){
-  return {
-    id:p.public_id,
-    databaseId:p.id,
-    name:p.name,
-    shortName:p.short_name,
-    seller:p.seller,
-    category:p.category_name || '',
-    price:Number(p.price),
-    unit:p.unit || '',
-    image:p.image ? (p.image.startsWith('http') ? p.image : `${req.protocol}://${req.get('host')}${p.image.startsWith('/')?'':'/'}${p.image}`) : '',
-    rating:Number(p.rating),
-    stock:Number(p.stock),
-    description:p.description || '',
-    sellerAddress:p.seller_address || ''
-  };
+
+// =====================================================
+// GET ALL PRODUCTS
+// =====================================================
+
+async function getProducts(
+  req,
+  res
+) {
+  try {
+    const includeHidden = req.query.includeHidden === "true";
+    const [products] = await pool.execute(
+      `SELECT p.*, c.name AS category_name
+       FROM products p
+       LEFT JOIN categories c ON c.id = p.category_id
+       ${includeHidden ? "" : "WHERE p.is_visible = 1"}
+       ORDER BY p.id DESC`
+    );
+
+    return res.json({
+      success: true,
+      data: products,
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message:
+        "Gagal mengambil produk.",
+      error:
+        error.message,
+    });
+  }
 }
 
-async function getProducts(req,res){
-  try{
-    const params=[]; const where=[];
-    if(req.query.category){where.push('c.name=?');params.push(req.query.category);}
-    if(req.query.q){where.push('(LOWER(p.name) LIKE ? OR LOWER(p.short_name) LIKE ? OR LOWER(p.seller) LIKE ? OR LOWER(COALESCE(p.description,"")) LIKE ?)');const q=`%${String(req.query.q).toLowerCase()}%`;params.push(q,q,q,q);}
-    if(req.query.inStock==='true') where.push('p.stock>0');
-    const sql=`SELECT p.*,c.name category_name FROM products p LEFT JOIN categories c ON c.id=p.category_id ${where.length?'WHERE '+where.join(' AND '):''} ORDER BY p.created_at DESC,p.id DESC`;
-    const [rows]=await pool.execute(sql,params);
-    res.json({success:true,total:rows.length,data:rows.map(x=>mapProduct(x,req))});
-  }catch(error){res.status(500).json({success:false,message:'Gagal mengambil produk.',error:error.message});}
+
+// =====================================================
+// GET PRODUCT BY ID
+// =====================================================
+
+async function getProductById(
+  req,
+  res
+) {
+  try {
+    const {
+      id,
+    } = req.params;
+
+    const [
+      products,
+    ] = await pool.execute(
+      `
+      SELECT
+        p.*,
+        c.name AS category_name
+
+      FROM products p
+
+      LEFT JOIN categories c
+        ON c.id = p.category_id
+
+      WHERE p.id = ?
+
+      LIMIT 1
+      `,
+      [id]
+    );
+
+    if (
+      products.length ===
+      0
+    ) {
+      return res.status(404).json({
+        success: false,
+        message:
+          "Produk tidak ditemukan.",
+      });
+    }
+
+    return res.json({
+      success: true,
+      data: products[0],
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message:
+        "Gagal mengambil produk.",
+      error:
+        error.message,
+    });
+  }
 }
 
-async function getProductById(req,res){
-  try{const [rows]=await pool.execute('SELECT p.*,c.name category_name FROM products p LEFT JOIN categories c ON c.id=p.category_id WHERE p.public_id=? LIMIT 1',[req.params.id]);if(!rows.length)return res.status(404).json({success:false,message:'Produk tidak ditemukan.'});res.json({success:true,data:mapProduct(rows[0],req)});}catch(error){res.status(500).json({success:false,message:'Gagal mengambil detail produk.',error:error.message});}
+
+// =====================================================
+// CREATE PRODUCT
+// =====================================================
+
+async function createProduct(
+  req,
+  res
+) {
+  try {
+    const {
+      name,
+      description,
+      price,
+      stock,
+      category_id,
+      sku,
+      origin_block,
+      unit,
+      max_stock,
+      is_visible,
+      tag,
+      price_note,
+    } = req.body;
+
+    const userId =
+      req.user?.id || null;
+
+    if (
+      !name ||
+      price === undefined
+    ) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Nama dan harga produk wajib diisi.",
+      });
+    }
+
+    let image = req.body.image || null;
+
+    if (req.file) {
+      image =
+        `${req.protocol}://${req.get(
+          "host"
+        )}/uploads/products/${req.file.filename}`;
+    }
+
+    const [
+      result,
+    ] = await pool.execute(
+      `
+      INSERT INTO products
+      (
+        category_id,
+        user_id,
+        name,
+        description,
+        price,
+        stock,
+        image, sku, origin_block, unit, max_stock, is_visible, tag, price_note
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `,
+      [
+        category_id ||
+          null,
+
+        userId,
+
+        name,
+
+        description ||
+          "",
+
+        Number(price),
+
+        Number(stock || 0),
+
+        image,
+        sku || null,
+        origin_block || null,
+        unit || "kg",
+        Number(max_stock || 0),
+        is_visible === undefined ? 1 : Number(Boolean(is_visible)),
+        tag || null,
+        price_note || null,
+      ]
+    );
+
+    return res.status(201).json({
+      success: true,
+      message:
+        "Produk berhasil ditambahkan.",
+
+      data: {
+        id: result.insertId,
+        name,
+        description,
+        price,
+        stock,
+        image,
+      },
+    });
+  } catch (error) {
+    console.error(
+      "CREATE PRODUCT ERROR:",
+      error
+    );
+
+    return res.status(500).json({
+      success: false,
+      message:
+        "Gagal menambahkan produk.",
+      error:
+        error.message,
+    });
+  }
 }
 
-async function createProduct(req,res){
-  try{
-    const {name,shortName,short_name,seller,category,categoryId,description,price,unit,rating,stock,sellerAddress}=req.body;
-    if(!name || !seller || price===undefined || stock===undefined) return res.status(400).json({success:false,message:'Nama, penjual, harga, dan stok wajib diisi.'});
-    let category_id=categoryId||null;
-    if(!category_id && category){const [c]=await pool.execute('SELECT id FROM categories WHERE name=? LIMIT 1',[category]);category_id=c[0]?.id||null;}
-    const publicId=`prd-${Date.now()}-${Math.round(Math.random()*99999)}`;
-    const image=req.file?`/uploads/products/${req.file.filename}`:(req.body.image||null);
-    const [result]=await pool.execute(`INSERT INTO products(public_id,name,short_name,seller,seller_address,category_id,description,price,unit,image,rating,stock,user_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`,[publicId,name,String(shortName||short_name||name).trim(),seller,sellerAddress||null,category_id,description||'',Number(price),unit||'',image,Number(rating||0),Number(stock),req.user.id]);
-    const [rows]=await pool.execute('SELECT p.*,c.name category_name FROM products p LEFT JOIN categories c ON c.id=p.category_id WHERE p.id=?',[result.insertId]);
-    res.status(201).json({success:true,message:'Produk berhasil ditambahkan.',data:mapProduct(rows[0],req)});
-  }catch(error){res.status(500).json({success:false,message:'Gagal menambahkan produk.',error:error.message});}
+
+// =====================================================
+// UPDATE PRODUCT
+// =====================================================
+
+async function updateProduct(
+  req,
+  res
+) {
+  try {
+    const {
+      id,
+    } = req.params;
+
+    const {
+      name,
+      description,
+      price,
+      stock,
+      category_id,
+      sku,
+      origin_block,
+      unit,
+      max_stock,
+      is_visible,
+      tag,
+      price_note,
+    } = req.body;
+
+    let image = req.body.image || null;
+
+    if (req.file) {
+      image =
+        `${req.protocol}://${req.get(
+          "host"
+        )}/uploads/products/${req.file.filename}`;
+    }
+
+    const fields = [
+      name, description || "", Number(price), Number(stock || 0),
+      category_id || null, image, sku || null, origin_block || null,
+      unit || "kg", Number(max_stock || 0),
+      is_visible === undefined ? 1 : Number(Boolean(is_visible)),
+      tag || null, price_note || null, id
+    ];
+    await pool.execute(`
+      UPDATE products SET
+        name = ?, description = ?, price = ?, stock = ?, category_id = ?,
+        image = COALESCE(?, image), sku = ?, origin_block = ?, unit = ?,
+        max_stock = ?, is_visible = ?, tag = ?, price_note = ?
+      WHERE id = ?
+    `, fields);
+
+    return res.json({
+      success: true,
+      message:
+        "Produk berhasil diperbarui.",
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message:
+        "Gagal memperbarui produk.",
+      error:
+        error.message,
+    });
+  }
 }
 
-async function updateProduct(req,res){
-  try{
-    const [old]=await pool.execute('SELECT * FROM products WHERE public_id=? LIMIT 1',[req.params.id]);
-    if(!old.length)return res.status(404).json({success:false,message:'Produk tidak ditemukan.'});
-    if(old[0].user_id!==req.user.id && req.user.role!=='admin')return res.status(403).json({success:false,message:'Tidak punya akses mengubah produk ini.'});
-    const b=req.body; let category_id=b.categoryId||null;
-    if(!category_id&&b.category){const [c]=await pool.execute('SELECT id FROM categories WHERE name=? LIMIT 1',[b.category]);category_id=c[0]?.id||null;}
-    let image=old[0].image;if(req.file)image=`/uploads/products/${req.file.filename}`;else if(b.image!==undefined)image=b.image;
-    await pool.execute(`UPDATE products SET name=?,short_name=?,seller=?,seller_address=?,category_id=?,description=?,price=?,unit=?,image=?,rating=?,stock=? WHERE public_id=?`,[b.name??old[0].name,b.shortName??b.short_name??old[0].short_name,b.seller??old[0].seller,b.sellerAddress??old[0].seller_address,category_id,b.description??old[0].description,Number(b.price??old[0].price),b.unit??old[0].unit,image,Number(b.rating??old[0].rating),Number(b.stock??old[0].stock),req.params.id]);
-    const [rows]=await pool.execute('SELECT p.*,c.name category_name FROM products p LEFT JOIN categories c ON c.id=p.category_id WHERE p.public_id=?',[req.params.id]);res.json({success:true,message:'Produk berhasil diperbarui.',data:mapProduct(rows[0],req)});
-  }catch(error){res.status(500).json({success:false,message:'Gagal memperbarui produk.',error:error.message});}
+
+// =====================================================
+// DELETE PRODUCT
+// =====================================================
+
+async function deleteProduct(
+  req,
+  res
+) {
+  try {
+    const {
+      id,
+    } = req.params;
+
+    await pool.execute(
+      `
+      DELETE FROM products
+      WHERE id = ?
+      `,
+      [id]
+    );
+
+    return res.json({
+      success: true,
+      message:
+        "Produk berhasil dihapus.",
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message:
+        "Gagal menghapus produk.",
+      error:
+        error.message,
+    });
+  }
 }
 
-async function deleteProduct(req,res){
-  try{const [rows]=await pool.execute('SELECT * FROM products WHERE public_id=? LIMIT 1',[req.params.id]);if(!rows.length)return res.status(404).json({success:false,message:'Produk tidak ditemukan.'});if(rows[0].user_id!==req.user.id&&req.user.role!=='admin')return res.status(403).json({success:false,message:'Tidak punya akses menghapus produk ini.'});await pool.execute('DELETE FROM products WHERE public_id=?',[req.params.id]);res.json({success:true,message:'Produk berhasil dihapus.'});}catch(error){res.status(500).json({success:false,message:'Gagal menghapus produk.',error:error.message});}
-}
-
-module.exports={getProducts,getProductById,createProduct,updateProduct,deleteProduct};
+module.exports = {
+  getProducts,
+  getProductById,
+  createProduct,
+  updateProduct,
+  deleteProduct,
+};

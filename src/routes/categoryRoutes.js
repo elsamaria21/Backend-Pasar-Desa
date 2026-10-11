@@ -1,1 +1,8 @@
-const express=require('express');const auth=require('../middleware/authMiddleware');const c=require('../controllers/categoryController');const r=express.Router();r.get('/',c.getCategories);r.post('/',auth,c.createCategory);module.exports=r;
+const router = require("express").Router();
+const { getCategories, createCategory, updateCategory, deleteCategory } = require("../controllers/categoryController");
+router.get("/", getCategories);
+router.post("/", createCategory);
+router.put("/:id", updateCategory);
+router.patch("/:id", updateCategory);
+router.delete("/:id", deleteCategory);
+module.exports = router;

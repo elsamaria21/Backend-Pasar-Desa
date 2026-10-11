@@ -1,8 +1,168 @@
-const {pool}=require('../config/database');
-async function rows(userId,req){const [r]=await pool.execute(`SELECT c.id,c.product_id,c.quantity,c.selected,p.public_id,p.name,p.short_name,p.seller,p.price,p.unit,p.image,p.stock,p.rating,cat.name category_name FROM carts c JOIN products p ON p.id=c.product_id LEFT JOIN categories cat ON cat.id=p.category_id WHERE c.user_id=? ORDER BY c.id DESC`,[userId]);return r.map(x=>({id:x.id,productId:x.public_id,quantity:x.quantity,selected:Boolean(x.selected),subtotal:Number(x.price)*x.quantity,product:{id:x.public_id,name:x.name,shortName:x.short_name,seller:x.seller,category:x.category_name||'',price:Number(x.price),unit:x.unit,image:x.image?`${req.protocol}://${req.get('host')}${x.image}`:'',rating:Number(x.rating),stock:x.stock}}));}
-async function getCart(req,res){try{res.json({success:true,data:await rows(req.user.id,req)});}catch(e){res.status(500).json({success:false,message:'Gagal mengambil keranjang.',error:e.message});}}
-async function addToCart(req,res){try{const {product_id,quantity=1}=req.body;const [p]=await pool.execute('SELECT id,stock FROM products WHERE public_id=? LIMIT 1',[product_id]);if(!p.length)return res.status(404).json({success:false,message:'Produk tidak ditemukan.'});if(p[0].stock<=0)return res.status(400).json({success:false,message:'Produk sedang habis.'});const q=Number(quantity);if(q<1||q>p[0].stock)return res.status(400).json({success:false,message:'Quantity melebihi stok.'});const [e]=await pool.execute('SELECT id,quantity FROM carts WHERE user_id=? AND product_id=?',[req.user.id,p[0].id]);if(e.length){const nq=e[0].quantity+q;if(nq>p[0].stock)return res.status(400).json({success:false,message:'Quantity melebihi stok.'});await pool.execute('UPDATE carts SET quantity=? WHERE id=?',[nq,e[0].id]);}else await pool.execute('INSERT INTO carts(user_id,product_id,quantity) VALUES(?,?,?)',[req.user.id,p[0].id,q]);res.json({success:true,message:'Produk berhasil ditambahkan ke keranjang.',data:await rows(req.user.id,req)});}catch(e){res.status(500).json({success:false,message:'Gagal menambahkan produk.',error:e.message});}}
-async function updateCart(req,res){try{const q=Number(req.body.quantity);if(q<1)return removeFromCart(req,res);const [r]=await pool.execute(`SELECT c.id,p.stock FROM carts c JOIN products p ON p.id=c.product_id WHERE c.id=? AND c.user_id=?`,[req.params.id,req.user.id]);if(!r.length)return res.status(404).json({success:false,message:'Item keranjang tidak ditemukan.'});if(q>r[0].stock)return res.status(400).json({success:false,message:'Quantity melebihi stok.'});await pool.execute('UPDATE carts SET quantity=?,selected=? WHERE id=? AND user_id=?',[q,req.body.selected===undefined?1:(req.body.selected?1:0),req.params.id,req.user.id]);res.json({success:true,data:await rows(req.user.id,req)});}catch(e){res.status(500).json({success:false,message:'Gagal memperbarui keranjang.',error:e.message});}}
-async function removeFromCart(req,res){try{await pool.execute('DELETE FROM carts WHERE id=? AND user_id=?',[req.params.id,req.user.id]);res.json({success:true,message:'Item dihapus.',data:await rows(req.user.id,req)});}catch(e){res.status(500).json({success:false,message:'Gagal menghapus item.',error:e.message});}}
-async function selectAll(req,res){try{await pool.execute('UPDATE carts SET selected=? WHERE user_id=?',[req.body.selected?1:0,req.user.id]);res.json({success:true,data:await rows(req.user.id,req)});}catch(e){res.status(500).json({success:false,message:'Gagal mengubah pilihan keranjang.',error:e.message});}}
-module.exports={getCart,addToCart,updateCart,removeFromCart,selectAll};
+const { db } = require('../config/database');
+
+async function getCart(req, res) {
+  try {
+    const [items] = await db.query(
+      `
+      SELECT
+        c.id,
+        c.product_id,
+        c.quantity,
+        p.name,
+        p.price,
+        p.image,
+        (p.price * c.quantity) AS subtotal
+      FROM carts c
+      JOIN products p
+        ON c.product_id = p.id
+      WHERE c.user_id = ?
+      ORDER BY c.id DESC
+      `,
+      [req.user.id]
+    );
+
+    res.json({
+      success: true,
+      data: items
+    });
+  } catch (error) {
+    console.error(error);
+
+    res.status(500).json({
+      success: false,
+      message: 'Gagal mengambil keranjang'
+    });
+  }
+}
+
+async function addToCart(req, res) {
+  try {
+    const {
+      product_id,
+      quantity
+    } = req.body;
+
+    if (!product_id || !quantity) {
+      return res.status(400).json({
+        success: false,
+        message: 'Produk dan quantity wajib diisi'
+      });
+    }
+
+    const [existing] = await db.query(
+      `SELECT id, quantity
+       FROM carts
+       WHERE user_id = ? AND product_id = ?`,
+      [
+        req.user.id,
+        product_id
+      ]
+    );
+
+    if (existing.length > 0) {
+      await db.query(
+        `UPDATE carts
+         SET quantity = quantity + ?
+         WHERE id = ?`,
+        [
+          quantity,
+          existing[0].id
+        ]
+      );
+    } else {
+      await db.query(
+        `INSERT INTO carts
+         (user_id, product_id, quantity)
+         VALUES (?, ?, ?)`,
+        [
+          req.user.id,
+          product_id,
+          quantity
+        ]
+      );
+    }
+
+    res.json({
+      success: true,
+      message: 'Produk berhasil ditambahkan ke keranjang'
+    });
+  } catch (error) {
+    console.error(error);
+
+    res.status(500).json({
+      success: false,
+      message: 'Gagal menambahkan produk ke keranjang'
+    });
+  }
+}
+
+async function updateCart(req, res) {
+  try {
+    const { id } = req.params;
+    const { quantity } = req.body;
+
+    if (!quantity || quantity < 1) {
+      return res.status(400).json({
+        success: false,
+        message: 'Quantity tidak valid'
+      });
+    }
+
+    await db.query(
+      `UPDATE carts
+       SET quantity = ?
+       WHERE id = ? AND user_id = ?`,
+      [
+        quantity,
+        id,
+        req.user.id
+      ]
+    );
+
+    res.json({
+      success: true,
+      message: 'Keranjang berhasil diperbarui'
+    });
+  } catch (error) {
+    console.error(error);
+
+    res.status(500).json({
+      success: false,
+      message: 'Gagal memperbarui keranjang'
+    });
+  }
+}
+
+async function deleteCart(req, res) {
+  try {
+    const { id } = req.params;
+
+    await db.query(
+      `DELETE FROM carts
+       WHERE id = ? AND user_id = ?`,
+      [
+        id,
+        req.user.id
+      ]
+    );
+
+    res.json({
+      success: true,
+      message: 'Produk berhasil dihapus dari keranjang'
+    });
+  } catch (error) {
+    console.error(error);
+
+    res.status(500).json({
+      success: false,
+      message: 'Gagal menghapus produk'
+    });
+  }
+}
+
+module.exports = {
+  getCart,
+  addToCart,
+  updateCart,
+  deleteCart
+};

@@ -1,1 +1,0 @@
-const express=require('express');const auth=require('../middleware/authMiddleware');const c=require('../controllers/reviewController');const r=express.Router();r.get('/:productId',c.list);r.post('/',auth,c.create);module.exports=r;

@@ -1,1 +1,28 @@
-const express=require('express');const upload=require('../middleware/uploadMiddleware');const auth=require('../middleware/authMiddleware');const c=require('../controllers/aiController');const r=express.Router();r.post('/product-description',auth,upload.single('image'),c.generateProduct);module.exports=r;
+const express =
+  require("express");
+
+const router =
+  express.Router();
+
+const upload =
+  require("../middleware/uploadMiddleware");
+
+const {
+  generateProduct,
+} =
+  require("../controllers/aiController");
+
+
+router.post(
+  "/product-description",
+
+  upload.single(
+    "image"
+  ),
+
+  generateProduct
+);
+
+
+module.exports =
+  router;

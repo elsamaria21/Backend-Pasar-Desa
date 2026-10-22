@@ -17,12 +17,10 @@ async function register(
   req,
   res
 ) {
+
   try {
-    const {
-      name,
-      email,
-      password,
-    } = req.body;
+    const { email, password } = req.body;
+    const name = req.body.name || req.body.nama;
 
     if (
       !name ||
@@ -237,7 +235,44 @@ async function login(
   }
 }
 
+// GET /api/auth/me — profil akun dari token (dipakai web dashboard)
+async function me(req, res) {
+  try {
+    const [users] = await pool.execute(
+      `SELECT id, name, email, role FROM users WHERE id = ? LIMIT 1`,
+      [req.user.id]
+    );
+
+    if (users.length === 0) {
+      return res.status(401).json({
+        success: false,
+        message: "Akun tidak ditemukan.",
+      });
+    }
+
+    const user = users[0];
+
+    return res.json({
+      success: true,
+      data: {
+        id: String(user.id),
+        nama: user.name,
+        email: user.email,
+        role: user.role,
+        jabatan: user.role === "admin" ? "Administrator" : "Pengguna",
+      },
+    });
+  } catch (error) {
+    console.error("ME ERROR:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Gagal mengambil profil.",
+    });
+  }
+}
+
 module.exports = {
   register,
   login,
+  me,
 };

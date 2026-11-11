@@ -17,7 +17,7 @@ async function getDashboard(req, res) {
     const [[orderStats]] = await pool.query(`
       SELECT COUNT(*) AS total,
              SUM(CASE WHEN status IN ('pending','perlu-dikemas','diproses') THEN 1 ELSE 0 END) AS perlu_dikemas,
-             SUM(CASE WHEN status IN ('siap-jemput','dikirim') THEN 1 ELSE 0 END) AS berjalan,
+             SUM(CASE WHEN status IN ('siap-jemput','dikirim','diantar','tiba-di-pos') THEN 1 ELSE 0 END) AS berjalan,
              SUM(CASE WHEN status = 'selesai' THEN total ELSE 0 END) AS penjualan
       FROM dashboard_orders
     `);
@@ -25,7 +25,9 @@ async function getDashboard(req, res) {
     const [[cashStats]] = await pool.query(`
       SELECT
         COALESCE(SUM(CASE WHEN type = 'credit' THEN amount WHEN type = 'debit' THEN -amount ELSE 0 END), 0) AS saldo,
-        COALESCE(SUM(CASE WHEN type = 'credit' AND category = 'penjualan' THEN amount ELSE 0 END), 0) AS omzet
+        COALESCE(SUM(CASE WHEN category = 'penjualan' THEN (CASE WHEN type = 'credit' THEN amount ELSE -amount END) ELSE 0 END), 0) AS omzet,
+        COALESCE(SUM(CASE WHEN category = 'penjualan' AND created_at >= DATE_FORMAT(CURDATE(), '%Y-%m-01') THEN (CASE WHEN type = 'credit' THEN amount ELSE -amount END) ELSE 0 END), 0) AS omzet_bulan_ini,
+        COALESCE(SUM(CASE WHEN type = 'credit' AND category = 'penjualan' AND created_at >= DATE_FORMAT(CURDATE(), '%Y-%m-01') THEN 1 ELSE 0 END), 0) AS transaksi_bulan_ini
       FROM dashboard_cash_transactions
     `);
 
@@ -109,6 +111,8 @@ async function getDashboard(req, res) {
           penjualan: rupiah(orderStats.penjualan),
           saldoKas: rupiah(cashStats.saldo),
           omzet: rupiah(cashStats.omzet),
+          omzetBulanIni: rupiah(cashStats.omzet_bulan_ini),
+          transaksiBulanIni: Number(cashStats.transaksi_bulan_ini || 0),
           jumlahPanen30Hari: Number(harvestStats.jumlahPanen || 0),
           jenisTanamanDipanen30Hari: Number(harvestStats.jenisTanaman || 0),
         },

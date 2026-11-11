@@ -34,5 +34,6 @@ async function testConnection() {
 
 module.exports = {
   pool,
+  db: pool,
   testConnection,
 };

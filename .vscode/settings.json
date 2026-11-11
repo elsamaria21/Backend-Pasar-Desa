@@ -1,0 +1,5 @@
+{
+    "compareFolders.excludeFilter": [
+        "/src\\controllers\\adminOrderController.js"
+    ]
+}

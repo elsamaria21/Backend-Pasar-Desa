@@ -81,168 +81,129 @@ async function getOrderById(req, res) {
 }
 
 async function createOrder(req, res) {
+  const { items, address, payment_method } = req.body || {};
+
+  if (!items || !Array.isArray(items) || items.length === 0) {
+    return res.status(400).json({ success: false, message: 'Item pesanan tidak boleh kosong' });
+  }
+
   const connection = await db.getConnection();
 
   try {
-    const {
-      items,
-      address,
-      payment_method
-    } = req.body;
-
-    if (!items || !Array.isArray(items) || items.length === 0) {
-      return res.status(400).json({
-        success: false,
-        message: 'Item pesanan tidak boleh kosong'
-      });
-    }
-
     await connection.beginTransaction();
 
     let total = 0;
+    const lines = [];
+    const stokTersisa = new Map(); // produk yang sama di beberapa baris dihitung kumulatif
 
     for (const item of items) {
+      const quantity = Number(item.quantity);
+
+      if (!Number.isFinite(quantity) || quantity <= 0) {
+        throw new Error('Jumlah item harus lebih dari 0');
+      }
+
+      // FOR UPDATE: mengunci baris produk sampai transaksi selesai, mencegah stok terjual ganda.
       const [products] = await connection.query(
-        'SELECT * FROM products WHERE id = ?',
+        'SELECT id, name, price, stock, is_visible FROM products WHERE id = ? FOR UPDATE',
         [item.product_id]
       );
 
       if (products.length === 0) {
-        throw new Error(
-          `Produk ${item.product_id} tidak ditemukan`
-        );
+        throw new Error(`Produk ${item.product_id} tidak ditemukan`);
       }
 
       const product = products[0];
 
-      if (product.stock < item.quantity) {
-        throw new Error(
-          `Stock ${product.name} tidak mencukupi`
-        );
+      if (!product.is_visible) {
+        throw new Error(`Produk ${product.name} tidak tersedia`);
       }
 
-      total +=
-        Number(product.price) *
-        Number(item.quantity);
+      const sisa = stokTersisa.has(product.id) ? stokTersisa.get(product.id) : Number(product.stock);
+
+      if (sisa < quantity) {
+        throw new Error(`Stock ${product.name} tidak mencukupi`);
+      }
+
+      stokTersisa.set(product.id, sisa - quantity);
+      total += Number(product.price) * quantity;
+      lines.push({ productId: product.id, quantity, price: product.price });
     }
 
     const [orderResult] = await connection.query(
-      `
-      INSERT INTO orders
-      (user_id, total, address, payment_method, status)
-      VALUES (?, ?, ?, ?, ?)
-      `,
-      [
-        req.user.id,
-        total,
-        address || null,
-        payment_method || null,
-        'pending'
-      ]
+      'INSERT INTO orders (user_id, total, address, payment_method, status) VALUES (?, ?, ?, ?, ?)',
+      [req.user.id, total, address || null, payment_method || null, 'pending']
     );
 
     const orderId = orderResult.insertId;
 
-    for (const item of items) {
-      const [products] = await connection.query(
-        'SELECT * FROM products WHERE id = ?',
-        [item.product_id]
-      );
-
-      const product = products[0];
-
+    for (const line of lines) {
       await connection.query(
-        `
-        INSERT INTO order_details
-        (order_id, product_id, quantity, price)
-        VALUES (?, ?, ?, ?)
-        `,
-        [
-          orderId,
-          item.product_id,
-          item.quantity,
-          product.price
-        ]
+        'INSERT INTO order_details (order_id, product_id, quantity, price) VALUES (?, ?, ?, ?)',
+        [orderId, line.productId, line.quantity, line.price]
       );
 
-      await connection.query(
-        `
-        UPDATE products
-        SET stock = stock - ?
-        WHERE id = ?
-        `,
-        [
-          item.quantity,
-          item.product_id
-        ]
-      );
+      await connection.query('UPDATE products SET stock = stock - ? WHERE id = ?', [line.quantity, line.productId]);
     }
 
     await connection.commit();
 
-    res.status(201).json({
-      success: true,
-      message: 'Pesanan berhasil dibuat',
-      order_id: orderId,
-      total
-    });
+    res.status(201).json({ success: true, message: 'Pesanan berhasil dibuat', order_id: orderId, total });
   } catch (error) {
     await connection.rollback();
-
     console.error(error);
-
-    res.status(500).json({
-      success: false,
-      message: error.message || 'Gagal membuat pesanan'
-    });
+    res.status(400).json({ success: false, message: error.message || 'Gagal membuat pesanan' });
   } finally {
     connection.release();
   }
 }
 
+// Khusus admin (dijaga di route). Pembatalan mengembalikan stok; pesanan batal tidak bisa dihidupkan lagi.
 async function updateOrderStatus(req, res) {
+  const { id } = req.params;
+  const { status } = req.body || {};
+  const allowedStatus = ['pending', 'diproses', 'dikirim', 'selesai', 'dibatalkan'];
+
+  if (!allowedStatus.includes(status)) {
+    return res.status(400).json({ success: false, message: 'Status pesanan tidak valid' });
+  }
+
+  const connection = await db.getConnection();
+
   try {
-    const { id } = req.params;
-    const { status } = req.body;
+    await connection.beginTransaction();
 
-    const allowedStatus = [
-      'pending',
-      'diproses',
-      'dikirim',
-      'selesai',
-      'dibatalkan'
-    ];
+    const [rows] = await connection.query('SELECT status FROM orders WHERE id = ? FOR UPDATE', [id]);
 
-    if (!allowedStatus.includes(status)) {
-      return res.status(400).json({
-        success: false,
-        message: 'Status pesanan tidak valid'
-      });
+    if (rows.length === 0) {
+      await connection.rollback();
+      return res.status(404).json({ success: false, message: 'Pesanan tidak ditemukan' });
     }
 
-    await db.query(
-      `
-      UPDATE orders
-      SET status = ?
-      WHERE id = ?
-      `,
-      [
-        status,
-        id
-      ]
-    );
+    if (rows[0].status === 'dibatalkan' && status !== 'dibatalkan') {
+      await connection.rollback();
+      return res.status(409).json({ success: false, message: 'Pesanan yang dibatalkan tidak bisa diaktifkan lagi' });
+    }
 
-    res.json({
-      success: true,
-      message: 'Status pesanan berhasil diperbarui'
-    });
+    await connection.query('UPDATE orders SET status = ? WHERE id = ?', [status, id]);
+
+    if (status === 'dibatalkan' && rows[0].status !== 'dibatalkan') {
+      const [details] = await connection.query('SELECT product_id, quantity FROM order_details WHERE order_id = ?', [id]);
+
+      for (const d of details) {
+        await connection.query('UPDATE products SET stock = stock + ? WHERE id = ?', [d.quantity, d.product_id]);
+      }
+    }
+
+    await connection.commit();
+
+    res.json({ success: true, message: 'Status pesanan berhasil diperbarui' });
   } catch (error) {
+    await connection.rollback();
     console.error(error);
-
-    res.status(500).json({
-      success: false,
-      message: 'Gagal memperbarui status pesanan'
-    });
+    res.status(500).json({ success: false, message: 'Gagal memperbarui status pesanan' });
+  } finally {
+    connection.release();
   }
 }
 

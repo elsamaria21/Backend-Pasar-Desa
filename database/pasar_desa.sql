@@ -106,6 +106,7 @@ CREATE TABLE IF NOT EXISTS dashboard_orders (
     payment_method VARCHAR(50) NULL,
     phone VARCHAR(30) NULL,
     notes TEXT NULL,
+
     status ENUM('pending','perlu-dikemas','diproses','siap-jemput','sedang-dikemas','dikirim','selesai','dibatalkan') NOT NULL DEFAULT 'pending',
     total DECIMAL(15,2) NOT NULL DEFAULT 0,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -190,3 +191,63 @@ CREATE TABLE IF NOT EXISTS harvest_results (
     INDEX idx_harvest_date (harvest_date),
     INDEX idx_harvest_crop_date (crop_name, harvest_date)
 );
+
+-- ===== Tabel/kolom tambahan (sama dengan migrations/2026-11-keamanan-dan-tabel-hilang.sql) =====
+ALTER TABLE users ADD COLUMN phone VARCHAR(30) NULL; -- jalankan sekali (MySQL tidak mendukung IF NOT EXISTS untuk kolom)
+
+ALTER TABLE products
+  MODIFY stock DECIMAL(15,3) NOT NULL DEFAULT 0,
+  MODIFY max_stock DECIMAL(15,3) NOT NULL DEFAULT 0;
+
+CREATE TABLE IF NOT EXISTS carts (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  user_id INT NOT NULL,
+  product_id INT NOT NULL,
+  quantity DECIMAL(15,3) NOT NULL DEFAULT 1,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE KEY uq_cart_user_product (user_id, product_id),
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+  FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS orders (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  user_id INT NOT NULL,
+  total DECIMAL(15,2) NOT NULL DEFAULT 0,
+  address TEXT NULL,
+  payment_method VARCHAR(50) NULL,
+  status ENUM('pending','diproses','dikirim','selesai','dibatalkan') NOT NULL DEFAULT 'pending',
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS order_details (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  order_id INT NOT NULL,
+  product_id INT NOT NULL,
+  quantity DECIMAL(15,3) NOT NULL,
+  price DECIMAL(15,2) NOT NULL,
+  FOREIGN KEY (order_id) REFERENCES orders(id) ON DELETE CASCADE,
+  FOREIGN KEY (product_id) REFERENCES products(id)
+);
+
+-- ===== Kolom produk untuk dashboard komoditas (sama dengan migrations/2026-11-komoditas-lengkap.sql) =====
+ALTER TABLE products
+  ADD COLUMN harga_coret DECIMAL(15,2) NULL,
+  ADD COLUMN ukuran VARCHAR(100) NULL,
+  ADD COLUMN sumber ENUM('Petani','UMKM','BUMDes') NULL,
+  ADD COLUMN penjual VARCHAR(150) NULL,
+  ADD COLUMN ketersediaan VARCHAR(50) NOT NULL DEFAULT 'Siap kirim',
+  ADD COLUMN batas_stok_rendah DECIMAL(15,3) NULL,
+  ADD COLUMN detail JSON NULL;
+
+-- ===== Kolom pesanan untuk dashboard (sama dengan migrations/2026-11-pesanan-lengkap.sql) =====
+ALTER TABLE dashboard_orders
+  ADD COLUMN id_pembayaran VARCHAR(80) NULL,
+  ADD COLUMN rt_rw VARCHAR(50) NULL,
+  ADD COLUMN patokan VARCHAR(255) NULL,
+  ADD COLUMN opsi_pengiriman ENUM('kurir-desa','ambil-mandiri') NOT NULL DEFAULT 'kurir-desa',
+  ADD COLUMN kurir JSON NULL,
+  ADD COLUMN tiba_di_pos_pada DATETIME NULL,
+  ADD COLUMN komplain JSON NULL,
+  ADD COLUMN kirim_ulang TINYINT(1) NOT NULL DEFAULT 0;

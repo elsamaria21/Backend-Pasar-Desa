@@ -34,6 +34,20 @@ async function register(
       });
     }
 
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(email))) {
+      return res.status(400).json({
+        success: false,
+        message: "Format email tidak valid.",
+      });
+    }
+
+    if (String(password).length < 8) {
+      return res.status(400).json({
+        success: false,
+        message: "Password minimal 8 karakter.",
+      });
+    }
+
     const [
       existingUsers,
     ] = await pool.execute(
@@ -70,14 +84,16 @@ async function register(
       (
         name,
         email,
-        password
+        password,
+        phone
       )
-      VALUES (?, ?, ?)
+      VALUES (?, ?, ?, ?)
       `,
       [
         name,
         email,
         hashedPassword,
+        req.body.phone || req.body.telepon || null,
       ]
     );
 

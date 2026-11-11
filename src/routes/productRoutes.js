@@ -1,63 +1,19 @@
-const express =
-  require("express");
+const express = require("express");
+const router = express.Router();
+const upload = require("../middleware/uploadMiddleware");
+const authMiddleware = require("../middleware/authMiddleware");
+const adminMiddleware = require("../middleware/adminMiddleware");
+const optionalAuthMiddleware = require("../middleware/optionalAuthMiddleware");
+const { getProducts, getProductById, createProduct, updateProduct, deleteProduct } = require("../controllers/productController");
 
-const router =
-  express.Router();
+// Katalog: publik. Produk tersembunyi (?includeHidden=true) hanya tampil untuk admin.
+router.get("/", optionalAuthMiddleware, getProducts);
+router.get("/:id", optionalAuthMiddleware, getProductById);
 
-const upload =
-  require("../middleware/uploadMiddleware");
+// Kelola produk: khusus admin.
+router.post("/", authMiddleware, adminMiddleware, upload.single("image"), createProduct);
+router.put("/:id", authMiddleware, adminMiddleware, upload.single("image"), updateProduct);
+router.patch("/:id", authMiddleware, adminMiddleware, upload.single("image"), updateProduct);
+router.delete("/:id", authMiddleware, adminMiddleware, deleteProduct);
 
-const authMiddleware =
-  require("../middleware/authMiddleware");
-
-const {
-  getProducts,
-  getProductById,
-  createProduct,
-  updateProduct,
-  deleteProduct,
-} =
-  require("../controllers/productController");
-
-
-// Semua produk
-router.get(
-  "/",
-  getProducts
-);
-
-
-// Detail produk
-router.get(
-  "/:id",
-  getProductById
-);
-
-
-// Tambah produk
-router.post(
-  "/",
-  authMiddleware,
-  upload.single("image"),
-  createProduct
-);
-
-
-// Update produk
-router.put(
-  "/:id",
-  authMiddleware,
-  upload.single("image"),
-  updateProduct
-);
-
-
-// Delete produk
-router.delete(
-  "/:id",
-  authMiddleware,
-  deleteProduct
-);
-
-module.exports =
-  router;
+module.exports = router;

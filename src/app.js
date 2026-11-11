@@ -34,9 +34,13 @@ const app = express();
 // MIDDLEWARE
 // =====================================================
 
+// CORS_ORIGIN = daftar origin dipisah koma (mis. https://dashboard.example.com).
+// Kosong = semua origin diizinkan (hanya nyaman untuk pengembangan; API memakai token Bearer, bukan cookie).
+const corsOrigins = (process.env.CORS_ORIGIN || "").split(",").map((o) => o.trim()).filter(Boolean);
+
 app.use(
   cors({
-    origin: "*",
+    origin: corsOrigins.length ? corsOrigins : "*",
   })
 );
 
@@ -193,7 +197,8 @@ app.use((error, req, res, next) => {
   return res.status(500).json({
     success: false,
     message: "Terjadi kesalahan server.",
-    error: error.message,
+    // Detail galat hanya untuk pengembangan; jangan bocor ke klien di produksi.
+    ...(process.env.NODE_ENV === "production" ? {} : { error: error.message }),
   });
 });
 

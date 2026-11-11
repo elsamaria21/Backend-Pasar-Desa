@@ -23,6 +23,7 @@ const adminProductRoutes = require("./routes/adminProductRoutes");
 const cartRoutes = require("./routes/cartRoutes");
 const orderRoutes = require("./routes/orderRoutes");
 const userRoutes = require("./routes/userRoutes");
+const addressRoutes = require("./routes/addressRoutes");
 
 // =====================================================
 // INITIALIZE APP
@@ -127,6 +128,9 @@ app.use("/api/cash", cashRoutes);
 
 app.use("/api/users", userRoutes);
 
+// TAMBAHAN GOOGLE MAPS DAN ALAMAT
+app.use("/api/addresses", addressRoutes);
+
 // =====================================================
 // HOME / API INFORMATION
 // =====================================================
@@ -153,6 +157,7 @@ app.get("/", (req, res) => {
       adminCash: "/api/admin/cash",
       cash: "/api/cash",
       uploads: "/uploads",
+      addresses: "/api/addresses",
     },
   });
 });

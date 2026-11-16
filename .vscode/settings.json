@@ -1,5 +1,6 @@
 {
     "compareFolders.excludeFilter": [
         "/src\\controllers\\adminOrderController.js"
-    ]
+    ],
+    "postman.settings.dotenv-detection-notification-visibility": false
 }

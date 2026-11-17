@@ -106,3 +106,43 @@ Semua memakai `Authorization: Bearer <token>` dari `POST /api/auth/login`, kecua
 | POST | `/api/orders/:id/komplain` | `alasan` (`tidak-segar`, `tidak-sesuai-timbangan`, `kemasan-rusak`, `tidak-sesuai-pesanan`, `lainnya`), `catatan`; hanya saat `tiba-di-pos` |
 
 `:id` boleh id angka atau kode pesanan. Pembayaran QRIS/saldo di aplikasi masih simulasi; server menerima klaim "sudah dibayar" dari aplikasi tanpa verifikasi gateway.
+
+## Pembatalan, pengaduan, dan ulasan
+
+- Jalankan `database/migrations/2026-11-pembatalan-dan-ulasan.sql` (kolom `dibatalkan_oleh`, `alasan_batal`, `dibatalkan_pada` pada `dashboard_orders`, dan tabel `order_reviews`).
+- `PATCH /api/orders/:id/status` (mobile) menerima `{ "alasan": "..." }`. Alasan, pelaku (`pembeli`), dan waktu tersimpan; dashboard menampilkannya di detail pesanan, tab **Dibatalkan**, dan notifikasi 24 jam terakhir. Pembatalan oleh admin tercatat `admin`.
+- Pengaduan = komplain pembeli (`POST /api/orders/:id/komplain`). Masuk ke dashboard di menu **Pengaduan** (pesanan berstatus `komplain`); keputusan (refund/pengganti) diambil di detail pesanan.
+- `POST /api/orders/:id/review` (mobile): `{ rating 1-5, tags[], note, courierLiked }`. Hanya pesanan `selesai` milik pembeli, satu kali per pesanan (ulang → 409).
+- `GET /api/admin/reviews` (admin): `ringkasan` (total, rata-rata, sebaran 1–5), `perProduk`, dan `ulasan` terbaru. Tampil di menu **Ulasan** dashboard. Rating juga ikut di `GET /api/products` (`rating`, `jumlah_ulasan`) dan dipakai aplikasi mobile.
+- `GET /api/admin/orders` kini memuat `dibatalkanOleh`, `alasanBatal`, `dibatalkanPada`, dan `ulasan`.
+
+## Tiket aduan, foto bukti, dan rating per komoditas
+
+Jalankan `database/migrations/2026-11-aduan-dan-foto.sql` (tabel `complaints`, kolom `order_reviews.photos` dan `order_reviews.item_ratings`).
+
+**Unggah foto** — `POST /api/uploads/evidence` (login, `multipart/form-data`, field `foto`, maks. 4 file, JPG/PNG/WEBP, 5 MB). Respons `data.urls`: alamat relatif `/uploads/evidence/<file>`. Alamat itu yang dikirim di field `foto`/`photos` di bawah. Alamat di luar `/uploads/evidence/` ditolak (400).
+
+| Sisi | Method | Path | Isi |
+|---|---|---|---|
+| Pembeli | POST | `/api/complaints` | `topik` (Kualitas Produk / Layu, Pengantaran / Kurir Desa, Saldo Dompet & Refund, Selisih Timbangan / Jumlah, Masalah Akun / Lainnya), `judul`, `deskripsi`, `kodePesanan` (opsional, harus milik pembeli), `solusiDiminta` (Kirim Ulang Barang Pengganti / Pengembalian Saldo Dompet PasarDesa / Koordinasi Langsung via WhatsApp Petugas), `foto[]` (maks. 4). Respons: `kode` `ADU-YYYYMMDD-NNNN`, status `diverifikasi` |
+| Pembeli | GET | `/api/complaints` | Riwayat aduan sendiri (termasuk `status`, `balasan`, `dibalasPada`) |
+| Admin | GET | `/api/admin/complaints` | Semua tiket |
+| Admin | PATCH | `/api/admin/complaints/:id` | `status` (hanya maju: `diverifikasi` → `diproses` → `selesai`) dan/atau `balasan` |
+| Pembeli | POST | `/api/orders/:id/komplain` | tambahan field `foto[]` (maks. 4) |
+| Pembeli | POST | `/api/orders/:id/review` | tambahan `photos[]` (maks. 6) dan `itemRatings: [{ komoditas, rating 1-5 }]`. `rating` boleh dikosongkan bila `itemRatings` ada (dibulatkan dari rata-rata) |
+
+`GET /api/admin/reviews` kini memuat `foto`, `items[{komoditas, rating}]` per ulasan, `ringkasan.denganFoto`, dan `perProduk[].denganFoto`. Rata-rata per komoditas memakai rating per komoditas bila ada, kalau tidak memakai rating pesanan.
+
+## Alamat pengguna & Google Maps (mobile)
+
+Jalankan `database/migrations/2026-11-alamat-pengguna.sql` (tabel `user_addresses`). Semua endpoint wajib login (Bearer token) dan hanya menyentuh alamat milik pengguna itu sendiri. Maksimal **4 alamat** per pengguna; alamat pertama otomatis menjadi alamat utama.
+
+| Method | Path | Isi |
+|---|---|---|
+| GET | `/api/addresses` | Daftar alamat (utama di atas). Respons memuat `total`, `maxAddress`, `remaining` |
+| POST | `/api/addresses` | `recipient_name`, `phone`, `full_address` (wajib); `label` (`Rumah`, `Toko/Lapak`, `Kantor Desa`, `Lainnya`), `dusun`, `rt_rw`, `address_note`, `latitude` + `longitude` (harus berpasangan), `is_primary` |
+| PUT | `/api/addresses/:id` | Field sama seperti POST (tanpa `is_primary`) |
+| PATCH | `/api/addresses/:id/primary` | Jadikan alamat utama |
+| DELETE | `/api/addresses/:id` | Hapus; bila yang dihapus alamat utama, alamat terbaru otomatis jadi utama |
+
+`POST /api/auth/register` dan `POST /api/auth/login` kini juga mengembalikan `phone`.

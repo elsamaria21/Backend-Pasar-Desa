@@ -106,8 +106,7 @@ CREATE TABLE IF NOT EXISTS dashboard_orders (
     payment_method VARCHAR(50) NULL,
     phone VARCHAR(30) NULL,
     notes TEXT NULL,
-
-    status ENUM('pending','perlu-dikemas','diproses','siap-jemput','sedang-dikemas','dikirim','selesai','dibatalkan') NOT NULL DEFAULT 'pending',
+    status ENUM('pending','perlu-dikemas','diproses','siap-jemput','sedang-dikemas','dikirim','diantar','tiba-di-pos','komplain','selesai','dibatalkan') NOT NULL DEFAULT 'pending',
     total DECIMAL(15,2) NOT NULL DEFAULT 0,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -251,3 +250,91 @@ ALTER TABLE dashboard_orders
   ADD COLUMN tiba_di_pos_pada DATETIME NULL,
   ADD COLUMN komplain JSON NULL,
   ADD COLUMN kirim_ulang TINYINT(1) NOT NULL DEFAULT 0;
+
+-- ===== Pembatalan & ulasan (sama dengan migrations/2026-11-pembatalan-dan-ulasan.sql) =====
+ALTER TABLE dashboard_orders
+  ADD COLUMN dibatalkan_oleh ENUM('pembeli','admin','sistem') NULL,
+  ADD COLUMN alasan_batal VARCHAR(255) NULL,
+  ADD COLUMN dibatalkan_pada DATETIME NULL;
+
+-- Satu ulasan per pesanan (pesanan harus sudah selesai). Rating berlaku untuk semua item di pesanan itu.
+CREATE TABLE IF NOT EXISTS order_reviews (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  order_id INT NOT NULL UNIQUE,
+  user_id INT NULL,
+  rating TINYINT NOT NULL,
+  tags JSON NULL,
+  note TEXT NULL,
+  courier_liked TINYINT(1) NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (order_id) REFERENCES dashboard_orders(id) ON DELETE CASCADE
+);
+
+-- ===== Tiket aduan & foto (sama dengan migrations/2026-11-aduan-dan-foto.sql) =====
+CREATE TABLE IF NOT EXISTS complaints (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  code VARCHAR(30) NOT NULL UNIQUE,
+  user_id INT NOT NULL,
+  topik VARCHAR(60) NOT NULL,
+  order_code VARCHAR(60) NULL,
+  judul VARCHAR(150) NOT NULL,
+  deskripsi TEXT NULL,
+  foto JSON NULL,
+  solusi_diminta VARCHAR(100) NULL,
+  status ENUM('diverifikasi','diproses','selesai') NOT NULL DEFAULT 'diverifikasi',
+  balasan TEXT NULL,
+  dibalas_pada DATETIME NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+ALTER TABLE order_reviews
+  ADD COLUMN photos JSON NULL,
+  ADD COLUMN item_ratings JSON NULL;
+
+-- ===== Alamat pengguna + koordinat Google Maps (sama dengan migrations/2026-11-alamat-pengguna.sql) =====
+-- ==========================================
+-- TABEL ALAMAT PENGGUNA PASAR DESA
+-- ==========================================
+
+CREATE TABLE IF NOT EXISTS user_addresses (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+
+    user_id INT NOT NULL,
+
+    recipient_name VARCHAR(150) NOT NULL,
+    phone VARCHAR(30) NOT NULL,
+
+    label ENUM(
+        'Rumah',
+        'Toko/Lapak',
+        'Kantor Desa',
+        'Lainnya'
+    ) NOT NULL DEFAULT 'Rumah',
+
+    dusun VARCHAR(100) NULL,
+    rt_rw VARCHAR(50) NULL,
+
+    full_address TEXT NOT NULL,
+    address_note VARCHAR(255) NULL,
+
+    -- KOORDINAT GOOGLE MAPS
+    latitude DECIMAL(10,7) NULL,
+    longitude DECIMAL(10,7) NULL,
+
+    -- ALAMAT UTAMA
+    is_primary TINYINT(1) NOT NULL DEFAULT 0,
+
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        ON UPDATE CURRENT_TIMESTAMP,
+
+    INDEX idx_user_addresses_user (user_id),
+
+    CONSTRAINT fk_user_addresses_user
+        FOREIGN KEY (user_id)
+        REFERENCES users(id)
+        ON DELETE CASCADE
+);

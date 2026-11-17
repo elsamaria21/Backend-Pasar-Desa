@@ -1,14 +1,18 @@
 const { pool } = require("../config/database");
 const { createOrder, restoreStock, terapkanUpdate, kondisiId } = require("./adminOrderController");
 
+const { normalisasiFoto } = require("../utils/evidence");
+
 const ALASAN_VALID = ["tidak-segar", "tidak-sesuai-timbangan", "kemasan-rusak", "tidak-sesuai-pesanan", "lainnya"];
 
 async function listMyOrders(req, res) {
   try {
     const [rows] = await pool.query(`
-      SELECT id, order_code AS order_code, user_id, customer_name, address, rt_rw, patokan, drop_point, opsi_pengiriman,
-        payment_method, phone, notes, status, total, kurir, komplain, tiba_di_pos_pada, created_at
-      FROM dashboard_orders WHERE user_id = ? ORDER BY created_at DESC, id DESC
+      SELECT o.id, o.order_code AS order_code, o.user_id, o.customer_name, o.address, o.rt_rw, o.patokan, o.drop_point, o.opsi_pengiriman,
+        o.payment_method, o.phone, o.notes, o.status, o.total, o.kurir, o.komplain, o.tiba_di_pos_pada, o.created_at,
+        o.alasan_batal, o.dibatalkan_oleh, r.rating AS ulasan_rating
+      FROM dashboard_orders o LEFT JOIN order_reviews r ON r.order_id = o.id
+      WHERE o.user_id = ? ORDER BY o.created_at DESC, o.id DESC
     `, [req.user.id]);
     for (const order of rows) {
       const [items] = await pool.query(`
@@ -55,7 +59,12 @@ async function cancelMyOrder(req, res) {
       await connection.rollback();
       return res.status(400).json({ success: false, message: "Pesanan tidak ditemukan atau sudah diproses." });
     }
-    await connection.query("UPDATE dashboard_orders SET status = 'dibatalkan' WHERE id = ?", [rows[0].id]);
+    // Alasan pembatalan dari pembeli tersimpan agar terlihat di dashboard admin.
+    const alasan = String(req.body?.alasan || "").trim().slice(0, 255) || null;
+    await connection.query(
+      "UPDATE dashboard_orders SET status = 'dibatalkan', dibatalkan_oleh = 'pembeli', alasan_batal = ?, dibatalkan_pada = NOW() WHERE id = ?",
+      [alasan, rows[0].id]
+    );
     await restoreStock(connection, rows[0].id); // stok yang dipesan dikembalikan
     await connection.commit();
     res.json({ success: true, message: "Pesanan dibatalkan." });
@@ -104,12 +113,14 @@ async function komplainMyOrder(req, res) {
     const pesanan = await pesananTibaDiPos(req, res);
     if (!pesanan) return;
     const alasan = ALASAN_VALID.includes(req.body?.alasan) ? req.body.alasan : "lainnya";
+    let foto;
+    try { foto = normalisasiFoto(req.body?.foto, 4); } catch (e) { return res.status(400).json({ success: false, message: e.message }); }
     const [items] = await pool.query("SELECT product_name, subtotal FROM dashboard_order_items WHERE order_id = ? ORDER BY id", [pesanan.id]);
     const komplain = {
       id: `KMP-${pesanan.id}`,
       alasan,
       catatan: String(req.body?.catatan || "").slice(0, 500),
-      foto: [],
+      foto,
       diajukanPada: new Date().toISOString(),
       status: "diajukan",
       items: items.map((i) => ({ komoditas: i.product_name, nilai: Number(i.subtotal) })),
@@ -122,4 +133,52 @@ async function komplainMyOrder(req, res) {
   }
 }
 
-module.exports = { listMyOrders, createMyOrder, getMyOrder, cancelMyOrder, receiveMyOrder, komplainMyOrder };
+// Pembeli memberi rating/ulasan setelah pesanan selesai (sekali per pesanan).
+async function reviewMyOrder(req, res) {
+  try {
+    const k = kondisiId(req.params.id);
+    const [rows] = await pool.query(`SELECT id, status FROM dashboard_orders WHERE ${k.sql} AND user_id = ? LIMIT 1`, [k.value, req.user.id]);
+    if (!rows.length) return res.status(404).json({ success: false, message: "Pesanan tidak ditemukan." });
+    if (rows[0].status !== "selesai") {
+      return res.status(409).json({ success: false, message: "Ulasan hanya bisa diberikan setelah pesanan selesai." });
+    }
+
+    // Rating per komoditas (opsional). Nama komoditas harus ada di pesanan ini; yang lain diabaikan.
+    const [items] = await pool.query("SELECT product_id, product_name FROM dashboard_order_items WHERE order_id = ?", [rows[0].id]);
+    const dikenal = new Map(items.map((i) => [i.product_name, i.product_id]));
+    const perItem = [];
+    for (const r of Array.isArray(req.body?.itemRatings) ? req.body.itemRatings : []) {
+      const nilai = Number(r?.rating);
+      if (!dikenal.has(r?.komoditas) || !Number.isInteger(nilai) || nilai < 1 || nilai > 5) {
+        return res.status(400).json({ success: false, message: "Rating per komoditas tidak valid." });
+      }
+      perItem.push({ productId: dikenal.get(r.komoditas), komoditas: r.komoditas, rating: nilai });
+    }
+
+    // Rating keseluruhan: dikirim klien, atau dibulatkan dari rata-rata rating per komoditas.
+    let rating = Number(req.body?.rating);
+    if ((req.body?.rating === undefined || req.body?.rating === null) && perItem.length) {
+      rating = Math.round(perItem.reduce((s, r) => s + r.rating, 0) / perItem.length);
+    }
+    if (!Number.isInteger(rating) || rating < 1 || rating > 5) {
+      return res.status(400).json({ success: false, message: "Rating harus bilangan bulat 1 sampai 5." });
+    }
+
+    let photos;
+    try { photos = normalisasiFoto(req.body?.photos, 6); } catch (e) { return res.status(400).json({ success: false, message: e.message }); }
+
+    const tags = Array.isArray(req.body?.tags) ? req.body.tags.map((t) => String(t).slice(0, 60)).slice(0, 10) : [];
+    const liked = req.body?.courierLiked === undefined || req.body.courierLiked === null ? null : req.body.courierLiked ? 1 : 0;
+    await pool.query(
+      "INSERT INTO order_reviews (order_id, user_id, rating, tags, note, courier_liked, photos, item_ratings) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+      [rows[0].id, req.user.id, rating, JSON.stringify(tags), String(req.body?.note || "").slice(0, 1000) || null, liked, JSON.stringify(photos), JSON.stringify(perItem)]
+    );
+    res.status(201).json({ success: true, message: "Terima kasih atas ulasan Anda." });
+  } catch (e) {
+    if (e.code === "ER_DUP_ENTRY") return res.status(409).json({ success: false, message: "Pesanan ini sudah diulas." });
+    console.error("MOBILE REVIEW ORDER:", e);
+    res.status(500).json({ success: false, message: "Gagal menyimpan ulasan." });
+  }
+}
+
+module.exports = { listMyOrders, createMyOrder, getMyOrder, cancelMyOrder, receiveMyOrder, komplainMyOrder, reviewMyOrder };

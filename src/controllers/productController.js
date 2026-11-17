@@ -15,6 +15,12 @@ const SQL_TERJUAL = `(SELECT COALESCE(SUM(oi.quantity), 0)
    JOIN dashboard_orders o ON o.id = oi.order_id
    WHERE oi.product_id = p.id AND o.status NOT IN ('pending', 'dibatalkan')) AS terjual`;
 
+// Rating produk = rata-rata ulasan pada pesanan yang memuat produk itu (null bila belum ada ulasan).
+const SQL_RATING = `(SELECT ROUND(AVG(r.rating), 1) FROM order_reviews r
+   JOIN dashboard_order_items oi ON oi.order_id = r.order_id WHERE oi.product_id = p.id) AS rating,
+  (SELECT COUNT(*) FROM order_reviews r
+   JOIN dashboard_order_items oi ON oi.order_id = r.order_id WHERE oi.product_id = p.id) AS jumlah_ulasan`;
+
 const SUMBER_VALID = ["Petani", "UMKM", "BUMDes"];
 
 // Kolom `detail` (JSON) menyimpan isian kaya dari dashboard: spesifikasi, keunggulan, pengiriman, label, dll.
@@ -46,7 +52,7 @@ async function getProducts(
   try {
     const includeHidden = req.query.includeHidden === "true" && isAdmin(req);
     const [products] = await pool.execute(
-      `SELECT p.*, c.name AS category_name, ${SQL_TERJUAL}
+      `SELECT p.*, c.name AS category_name, ${SQL_TERJUAL}, ${SQL_RATING}
        FROM products p
        LEFT JOIN categories c ON c.id = p.category_id
        ${includeHidden ? "" : "WHERE p.is_visible = 1"}
@@ -87,7 +93,7 @@ async function getProductById(
       SELECT
         p.*,
         c.name AS category_name,
-        ${SQL_TERJUAL}
+        ${SQL_TERJUAL}, ${SQL_RATING}
 
       FROM products p
 

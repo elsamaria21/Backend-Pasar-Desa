@@ -16,6 +16,10 @@ const harvestRoutes = require("./routes/harvestRoutes");
 const categoryRoutes = require("./routes/categoryRoutes");
 
 const adminOrderRoutes = require("./routes/adminOrderRoutes");
+const adminReviewRoutes = require("./routes/adminReviewRoutes");
+const complaintRoutes = require("./routes/complaintRoutes");
+const adminComplaintRoutes = require("./routes/adminComplaintRoutes");
+const uploadRoutes = require("./routes/uploadRoutes");
 const mobileOrderRoutes = require("./routes/mobileOrderRoutes");
 const cashRoutes = require("./routes/cashRoutes");
 
@@ -102,6 +106,10 @@ app.use("/api/categories", categoryRoutes);
 
 // Admin orders
 app.use("/api/admin/orders", adminOrderRoutes);
+app.use("/api/admin/reviews", adminReviewRoutes);
+app.use("/api/admin/complaints", adminComplaintRoutes);
+app.use("/api/complaints", complaintRoutes);
+app.use("/api/uploads", uploadRoutes);
 
 // Mobile orders
 app.use("/api/orders", mobileOrderRoutes);
@@ -127,8 +135,6 @@ app.use("/api/cash", cashRoutes);
 // =====================================================
 
 app.use("/api/users", userRoutes);
-
-// TAMBAHAN GOOGLE MAPS DAN ALAMAT
 app.use("/api/addresses", addressRoutes);
 
 // =====================================================
@@ -151,6 +157,9 @@ app.get("/", (req, res) => {
       categories: "/api/categories",
       orders: "/api/orders",
       adminOrders: "/api/admin/orders",
+      adminReviews: "/api/admin/reviews",
+      adminComplaints: "/api/admin/complaints",
+      complaints: "/api/complaints",
       orderManagement: "/api/order-management",
       cart: "/api/cart",
       users: "/api/users",

@@ -1,4 +1,3 @@
-
 const crypto = require("crypto");
 const { pool } = require("../config/database");
 
@@ -47,7 +46,8 @@ async function bacaPesanan(db, kondisi = "", params = []) {
     `SELECT id, order_code AS kode, id_pembayaran AS idPembayaran, user_id AS userId, customer_name AS pembeli,
        address AS alamat, rt_rw AS rtRw, patokan, drop_point AS dropPoint, opsi_pengiriman AS opsiPengiriman,
        payment_method AS metodeBayar, phone AS telepon, notes AS catatan, status, total,
-       tiba_di_pos_pada AS tibaDiPosPada, kurir, komplain, kirim_ulang AS kirimUlang, created_at AS dibuatPada
+       tiba_di_pos_pada AS tibaDiPosPada, kurir, komplain, kirim_ulang AS kirimUlang, created_at AS dibuatPada,
+       dibatalkan_oleh AS dibatalkanOleh, alasan_batal AS alasanBatal, dibatalkan_pada AS dibatalkanPada
      FROM dashboard_orders ${kondisi} ORDER BY created_at DESC, id DESC`,
     params
   );
@@ -63,9 +63,16 @@ async function bacaPesanan(db, kondisi = "", params = []) {
     if (!perPesanan.has(orderId)) perPesanan.set(orderId, []);
     perPesanan.get(orderId).push(item);
   }
+  // Ulasan pembeli (satu per pesanan) untuk ditampilkan di detail pesanan dashboard.
+  const [ulasan] = await db.query(
+    "SELECT order_id AS orderId, rating, tags, note AS catatan, courier_liked AS kurirDisukai, created_at AS dibuatPada FROM order_reviews WHERE order_id IN (?)",
+    [rows.map((r) => r.id)]
+  );
+  const perUlasan = new Map(ulasan.map(({ orderId, ...u }) => [orderId, { ...u, kurirDisukai: u.kurirDisukai === null ? null : Boolean(u.kurirDisukai) }]));
   for (const row of rows) {
     row.items = perPesanan.get(row.id) || [];
     row.kirimUlang = Boolean(row.kirimUlang);
+    row.ulasan = perUlasan.get(row.id) || null;
   }
   return rows;
 }
@@ -201,6 +208,11 @@ async function terapkanUpdate(kondisi, body, userId) {
     if (body.status !== undefined) {
       if (!STATUS.has(body.status)) throw new Error("Status pesanan tidak valid.");
       fields.push("status = ?"); values.push(body.status);
+      if (body.status === "dibatalkan") {
+        // Jejak pembatalan untuk dashboard: oleh pembeli (lewat aplikasi) atau admin, beserta alasannya.
+        fields.push("dibatalkan_oleh = ?", "alasan_batal = ?", "dibatalkan_pada = NOW()");
+        values.push(userId ? "pembeli" : "admin", String(body.alasanBatal || "").slice(0, 255) || null);
+      }
     }
   } catch (e) {
     return gagal(400, e.message);

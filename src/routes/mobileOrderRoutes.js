@@ -1,6 +1,6 @@
 const router = require("express").Router();
 const authMiddleware = require("../middleware/authMiddleware");
-const { listMyOrders, createMyOrder, getMyOrder, cancelMyOrder, receiveMyOrder, komplainMyOrder } = require("../controllers/mobileOrderController");
+const { listMyOrders, createMyOrder, getMyOrder, cancelMyOrder, receiveMyOrder, komplainMyOrder, reviewMyOrder } = require("../controllers/mobileOrderController");
 router.use(authMiddleware);
 router.get("/", listMyOrders);
 router.post("/", createMyOrder);
@@ -8,4 +8,5 @@ router.get("/:id", getMyOrder);
 router.patch("/:id/status", cancelMyOrder);
 router.patch("/:id/receive", receiveMyOrder);
 router.post("/:id/komplain", komplainMyOrder);
+router.post("/:id/review", reviewMyOrder);
 module.exports = router;

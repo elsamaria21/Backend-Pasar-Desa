@@ -76,6 +76,9 @@ async function register(
         10
       );
 
+    const phone =
+      req.body.phone || req.body.telepon || null;
+
     const [
       result,
     ] = await pool.execute(
@@ -93,7 +96,7 @@ async function register(
         name,
         email,
         hashedPassword,
-        req.body.phone || req.body.telepon || null,
+        phone,
       ]
     );
 
@@ -120,6 +123,7 @@ async function register(
         id: result.insertId,
         name,
         email,
+        phone,
         role: "user",
         token,
       },
@@ -231,6 +235,7 @@ async function login(
         id: user.id,
         name: user.name,
         email: user.email,
+        phone: user.phone || null,
         role: user.role,
         token,
       },

@@ -1,0 +1,16 @@
+.venv/
+.venv-local/
+venv/
+__pycache__/
+*.py[cod]
+.env
+.DS_Store
+
+datasets/
+backup_dataset/
+runs/
+
+models/
+*.pt
+*.onnx
+*.engine

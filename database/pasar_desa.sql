@@ -1,3 +1,15 @@
+-- =====================================================================================================
+-- PASAR DESA — skema database lengkap (satu file)
+--
+-- AMAN DIJALANKAN BERULANG KALI, di database KOSONG maupun database LAMA yang sudah berisi data:
+--   * tabel dibuat hanya bila belum ada (CREATE TABLE IF NOT EXISTS)
+--   * kolom/indeks ditambahkan hanya bila belum ada (dicek lewat information_schema)
+--   * data yang sudah ada tidak dihapus
+-- Menggantikan seluruh isi folder migrations/ (file lama boleh diarsipkan, tidak perlu dijalankan lagi).
+-- Tidak memakai DELIMITER/stored procedure, jadi jalan di phpMyAdmin (tab SQL) maupun `mysql < file.sql`.
+-- Cara pakai: tempel/jalankan seluruh isi file ini, lalu restart backend.
+-- =====================================================================================================
+
 CREATE DATABASE IF NOT EXISTS pasar_desa;
 
 USE pasar_desa;
@@ -114,7 +126,6 @@ CREATE TABLE IF NOT EXISTS dashboard_orders (
     CONSTRAINT fk_dashboard_orders_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
 );
 
-
 -- =====================================================
 -- PESANAN BERSAMA WEB ADMIN & MOBILE
 -- Kedua aplikasi membaca dan mengubah tabel yang sama.
@@ -172,7 +183,6 @@ CREATE TABLE IF NOT EXISTS dashboard_couriers (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
-
 -- =====================================================
 -- HASIL PANEN (data operasional, tanpa data dummy)
 -- =====================================================
@@ -190,13 +200,6 @@ CREATE TABLE IF NOT EXISTS harvest_results (
     INDEX idx_harvest_date (harvest_date),
     INDEX idx_harvest_crop_date (crop_name, harvest_date)
 );
-
--- ===== Tabel/kolom tambahan (sama dengan migrations/2026-11-keamanan-dan-tabel-hilang.sql) =====
-ALTER TABLE users ADD COLUMN phone VARCHAR(30) NULL; -- jalankan sekali (MySQL tidak mendukung IF NOT EXISTS untuk kolom)
-
-ALTER TABLE products
-  MODIFY stock DECIMAL(15,3) NOT NULL DEFAULT 0,
-  MODIFY max_stock DECIMAL(15,3) NOT NULL DEFAULT 0;
 
 CREATE TABLE IF NOT EXISTS carts (
   id INT AUTO_INCREMENT PRIMARY KEY,
@@ -230,37 +233,10 @@ CREATE TABLE IF NOT EXISTS order_details (
   FOREIGN KEY (product_id) REFERENCES products(id)
 );
 
--- ===== Kolom produk untuk dashboard komoditas (sama dengan migrations/2026-11-komoditas-lengkap.sql) =====
-ALTER TABLE products
-  ADD COLUMN harga_coret DECIMAL(15,2) NULL,
-  ADD COLUMN ukuran VARCHAR(100) NULL,
-  ADD COLUMN sumber ENUM('Petani','UMKM','BUMDes') NULL,
-  ADD COLUMN penjual VARCHAR(150) NULL,
-  ADD COLUMN ketersediaan VARCHAR(50) NOT NULL DEFAULT 'Siap kirim',
-  ADD COLUMN batas_stok_rendah DECIMAL(15,3) NULL,
-  ADD COLUMN detail JSON NULL;
-
--- ===== Kolom pesanan untuk dashboard (sama dengan migrations/2026-11-pesanan-lengkap.sql) =====
-ALTER TABLE dashboard_orders
-  ADD COLUMN id_pembayaran VARCHAR(80) NULL,
-  ADD COLUMN rt_rw VARCHAR(50) NULL,
-  ADD COLUMN patokan VARCHAR(255) NULL,
-  ADD COLUMN opsi_pengiriman ENUM('kurir-desa','ambil-mandiri') NOT NULL DEFAULT 'kurir-desa',
-  ADD COLUMN kurir JSON NULL,
-  ADD COLUMN tiba_di_pos_pada DATETIME NULL,
-  ADD COLUMN komplain JSON NULL,
-  ADD COLUMN kirim_ulang TINYINT(1) NOT NULL DEFAULT 0;
-
--- ===== Pembatalan & ulasan (sama dengan migrations/2026-11-pembatalan-dan-ulasan.sql) =====
-ALTER TABLE dashboard_orders
-  ADD COLUMN dibatalkan_oleh ENUM('pembeli','admin','sistem') NULL,
-  ADD COLUMN alasan_batal VARCHAR(255) NULL,
-  ADD COLUMN dibatalkan_pada DATETIME NULL;
-
 -- Satu ulasan per pesanan (pesanan harus sudah selesai). Rating berlaku untuk semua item di pesanan itu.
 CREATE TABLE IF NOT EXISTS order_reviews (
   id INT AUTO_INCREMENT PRIMARY KEY,
-  order_id INT NOT NULL UNIQUE,
+  order_id BIGINT NOT NULL UNIQUE,
   user_id INT NULL,
   rating TINYINT NOT NULL,
   tags JSON NULL,
@@ -270,7 +246,6 @@ CREATE TABLE IF NOT EXISTS order_reviews (
   FOREIGN KEY (order_id) REFERENCES dashboard_orders(id) ON DELETE CASCADE
 );
 
--- ===== Tiket aduan & foto (sama dengan migrations/2026-11-aduan-dan-foto.sql) =====
 CREATE TABLE IF NOT EXISTS complaints (
   id INT AUTO_INCREMENT PRIMARY KEY,
   code VARCHAR(30) NOT NULL UNIQUE,
@@ -289,11 +264,6 @@ CREATE TABLE IF NOT EXISTS complaints (
   FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 
-ALTER TABLE order_reviews
-  ADD COLUMN photos JSON NULL,
-  ADD COLUMN item_ratings JSON NULL;
-
--- ===== Alamat pengguna + koordinat Google Maps (sama dengan migrations/2026-11-alamat-pengguna.sql) =====
 -- ==========================================
 -- TABEL ALAMAT PENGGUNA PASAR DESA
 -- ==========================================
@@ -338,3 +308,204 @@ CREATE TABLE IF NOT EXISTS user_addresses (
         REFERENCES users(id)
         ON DELETE CASCADE
 );
+
+-- Jejak setiap notifikasi Midtrans (audit + bahan penelusuran bila ada selisih dana).
+CREATE TABLE IF NOT EXISTS payment_notifications (
+  id BIGINT AUTO_INCREMENT PRIMARY KEY,
+  order_code VARCHAR(80) NOT NULL,
+  midtrans_transaction_id VARCHAR(64) NULL,
+  transaction_status VARCHAR(30) NULL,
+  fraud_status VARCHAR(30) NULL,
+  status_code VARCHAR(10) NULL,
+  gross_amount VARCHAR(30) NULL,
+  payment_type VARCHAR(40) NULL,
+  sumber ENUM('webhook','sinkron','sweeper') NOT NULL DEFAULT 'webhook',
+  hasil VARCHAR(60) NULL,
+  raw JSON NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  INDEX idx_payment_notifications_order (order_code, created_at)
+);
+
+-- =====================================================================================================
+-- Kolom & indeks tambahan untuk database lama (dilewati otomatis bila sudah ada)
+-- =====================================================================================================
+
+-- ---- users ----
+SET @q = IF((SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'users' AND COLUMN_NAME = 'phone') = 0,
+  'ALTER TABLE users ADD COLUMN phone VARCHAR(30) NULL', 'DO 0');
+PREPARE st FROM @q; EXECUTE st; DEALLOCATE PREPARE st;
+
+-- ---- products (dashboard CRUD + komoditas lengkap) ----
+SET @q = IF((SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'products' AND COLUMN_NAME = 'sku') = 0,
+  'ALTER TABLE products ADD COLUMN sku VARCHAR(80) NULL UNIQUE', 'DO 0');
+PREPARE st FROM @q; EXECUTE st; DEALLOCATE PREPARE st;
+
+SET @q = IF((SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'products' AND COLUMN_NAME = 'origin_block') = 0,
+  'ALTER TABLE products ADD COLUMN origin_block VARCHAR(255) NULL', 'DO 0');
+PREPARE st FROM @q; EXECUTE st; DEALLOCATE PREPARE st;
+
+SET @q = IF((SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'products' AND COLUMN_NAME = 'unit') = 0,
+  'ALTER TABLE products ADD COLUMN unit VARCHAR(30) NOT NULL DEFAULT ''kg''', 'DO 0');
+PREPARE st FROM @q; EXECUTE st; DEALLOCATE PREPARE st;
+
+SET @q = IF((SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'products' AND COLUMN_NAME = 'max_stock') = 0,
+  'ALTER TABLE products ADD COLUMN max_stock INT NOT NULL DEFAULT 0', 'DO 0');
+PREPARE st FROM @q; EXECUTE st; DEALLOCATE PREPARE st;
+
+SET @q = IF((SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'products' AND COLUMN_NAME = 'is_visible') = 0,
+  'ALTER TABLE products ADD COLUMN is_visible TINYINT(1) NOT NULL DEFAULT 1', 'DO 0');
+PREPARE st FROM @q; EXECUTE st; DEALLOCATE PREPARE st;
+
+SET @q = IF((SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'products' AND COLUMN_NAME = 'tag') = 0,
+  'ALTER TABLE products ADD COLUMN tag VARCHAR(100) NULL', 'DO 0');
+PREPARE st FROM @q; EXECUTE st; DEALLOCATE PREPARE st;
+
+SET @q = IF((SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'products' AND COLUMN_NAME = 'price_note') = 0,
+  'ALTER TABLE products ADD COLUMN price_note VARCHAR(255) NULL', 'DO 0');
+PREPARE st FROM @q; EXECUTE st; DEALLOCATE PREPARE st;
+
+SET @q = IF((SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'products' AND COLUMN_NAME = 'harga_coret') = 0,
+  'ALTER TABLE products ADD COLUMN harga_coret DECIMAL(15,2) NULL', 'DO 0');
+PREPARE st FROM @q; EXECUTE st; DEALLOCATE PREPARE st;
+
+SET @q = IF((SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'products' AND COLUMN_NAME = 'ukuran') = 0,
+  'ALTER TABLE products ADD COLUMN ukuran VARCHAR(100) NULL', 'DO 0');
+PREPARE st FROM @q; EXECUTE st; DEALLOCATE PREPARE st;
+
+SET @q = IF((SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'products' AND COLUMN_NAME = 'sumber') = 0,
+  'ALTER TABLE products ADD COLUMN sumber ENUM(''Petani'',''UMKM'',''BUMDes'') NULL', 'DO 0');
+PREPARE st FROM @q; EXECUTE st; DEALLOCATE PREPARE st;
+
+SET @q = IF((SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'products' AND COLUMN_NAME = 'penjual') = 0,
+  'ALTER TABLE products ADD COLUMN penjual VARCHAR(150) NULL', 'DO 0');
+PREPARE st FROM @q; EXECUTE st; DEALLOCATE PREPARE st;
+
+SET @q = IF((SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'products' AND COLUMN_NAME = 'ketersediaan') = 0,
+  'ALTER TABLE products ADD COLUMN ketersediaan VARCHAR(50) NOT NULL DEFAULT ''Siap kirim''', 'DO 0');
+PREPARE st FROM @q; EXECUTE st; DEALLOCATE PREPARE st;
+
+SET @q = IF((SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'products' AND COLUMN_NAME = 'batas_stok_rendah') = 0,
+  'ALTER TABLE products ADD COLUMN batas_stok_rendah DECIMAL(15,3) NULL', 'DO 0');
+PREPARE st FROM @q; EXECUTE st; DEALLOCATE PREPARE st;
+
+SET @q = IF((SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'products' AND COLUMN_NAME = 'detail') = 0,
+  'ALTER TABLE products ADD COLUMN detail JSON NULL', 'DO 0');
+PREPARE st FROM @q; EXECUTE st; DEALLOCATE PREPARE st;
+
+-- Stok desimal agar pesanan pecahan (mis. 2,5 kg) tidak dibulatkan (MODIFY aman diulang).
+ALTER TABLE products MODIFY stock DECIMAL(15,3) NOT NULL DEFAULT 0, MODIFY max_stock DECIMAL(15,3) NOT NULL DEFAULT 0;
+
+-- ---- dashboard_orders (pesanan, pembatalan) ----
+SET @q = IF((SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'dashboard_orders' AND COLUMN_NAME = 'phone') = 0,
+  'ALTER TABLE dashboard_orders ADD COLUMN phone VARCHAR(30) NULL', 'DO 0');
+PREPARE st FROM @q; EXECUTE st; DEALLOCATE PREPARE st;
+
+SET @q = IF((SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'dashboard_orders' AND COLUMN_NAME = 'notes') = 0,
+  'ALTER TABLE dashboard_orders ADD COLUMN notes TEXT NULL', 'DO 0');
+PREPARE st FROM @q; EXECUTE st; DEALLOCATE PREPARE st;
+
+SET @q = IF((SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'dashboard_orders' AND COLUMN_NAME = 'id_pembayaran') = 0,
+  'ALTER TABLE dashboard_orders ADD COLUMN id_pembayaran VARCHAR(80) NULL', 'DO 0');
+PREPARE st FROM @q; EXECUTE st; DEALLOCATE PREPARE st;
+
+SET @q = IF((SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'dashboard_orders' AND COLUMN_NAME = 'rt_rw') = 0,
+  'ALTER TABLE dashboard_orders ADD COLUMN rt_rw VARCHAR(50) NULL', 'DO 0');
+PREPARE st FROM @q; EXECUTE st; DEALLOCATE PREPARE st;
+
+SET @q = IF((SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'dashboard_orders' AND COLUMN_NAME = 'patokan') = 0,
+  'ALTER TABLE dashboard_orders ADD COLUMN patokan VARCHAR(255) NULL', 'DO 0');
+PREPARE st FROM @q; EXECUTE st; DEALLOCATE PREPARE st;
+
+SET @q = IF((SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'dashboard_orders' AND COLUMN_NAME = 'opsi_pengiriman') = 0,
+  'ALTER TABLE dashboard_orders ADD COLUMN opsi_pengiriman ENUM(''kurir-desa'',''ambil-mandiri'') NOT NULL DEFAULT ''kurir-desa''', 'DO 0');
+PREPARE st FROM @q; EXECUTE st; DEALLOCATE PREPARE st;
+
+SET @q = IF((SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'dashboard_orders' AND COLUMN_NAME = 'kurir') = 0,
+  'ALTER TABLE dashboard_orders ADD COLUMN kurir JSON NULL', 'DO 0');
+PREPARE st FROM @q; EXECUTE st; DEALLOCATE PREPARE st;
+
+SET @q = IF((SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'dashboard_orders' AND COLUMN_NAME = 'tiba_di_pos_pada') = 0,
+  'ALTER TABLE dashboard_orders ADD COLUMN tiba_di_pos_pada DATETIME NULL', 'DO 0');
+PREPARE st FROM @q; EXECUTE st; DEALLOCATE PREPARE st;
+
+SET @q = IF((SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'dashboard_orders' AND COLUMN_NAME = 'komplain') = 0,
+  'ALTER TABLE dashboard_orders ADD COLUMN komplain JSON NULL', 'DO 0');
+PREPARE st FROM @q; EXECUTE st; DEALLOCATE PREPARE st;
+
+SET @q = IF((SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'dashboard_orders' AND COLUMN_NAME = 'kirim_ulang') = 0,
+  'ALTER TABLE dashboard_orders ADD COLUMN kirim_ulang TINYINT(1) NOT NULL DEFAULT 0', 'DO 0');
+PREPARE st FROM @q; EXECUTE st; DEALLOCATE PREPARE st;
+
+SET @q = IF((SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'dashboard_orders' AND COLUMN_NAME = 'dibatalkan_oleh') = 0,
+  'ALTER TABLE dashboard_orders ADD COLUMN dibatalkan_oleh ENUM(''pembeli'',''admin'',''sistem'') NULL', 'DO 0');
+PREPARE st FROM @q; EXECUTE st; DEALLOCATE PREPARE st;
+
+SET @q = IF((SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'dashboard_orders' AND COLUMN_NAME = 'alasan_batal') = 0,
+  'ALTER TABLE dashboard_orders ADD COLUMN alasan_batal VARCHAR(255) NULL', 'DO 0');
+PREPARE st FROM @q; EXECUTE st; DEALLOCATE PREPARE st;
+
+SET @q = IF((SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'dashboard_orders' AND COLUMN_NAME = 'dibatalkan_pada') = 0,
+  'ALTER TABLE dashboard_orders ADD COLUMN dibatalkan_pada DATETIME NULL', 'DO 0');
+PREPARE st FROM @q; EXECUTE st; DEALLOCATE PREPARE st;
+
+-- Daftar status lengkap yang dipakai dashboard (MODIFY aman diulang).
+ALTER TABLE dashboard_orders MODIFY status ENUM('pending','perlu-dikemas','diproses','siap-jemput','sedang-dikemas','dikirim','diantar','tiba-di-pos','komplain','selesai','dibatalkan') NOT NULL DEFAULT 'pending';
+
+-- ---- dashboard_orders (Midtrans) ----
+SET @q = IF((SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'dashboard_orders' AND COLUMN_NAME = 'payment_status') = 0,
+  'ALTER TABLE dashboard_orders ADD COLUMN payment_status ENUM(''menunggu'',''lunas'',''gagal'',''kedaluwarsa'',''dikembalikan'',''cod'') NOT NULL DEFAULT ''cod''', 'DO 0');
+PREPARE st FROM @q; EXECUTE st; DEALLOCATE PREPARE st;
+
+SET @q = IF((SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'dashboard_orders' AND COLUMN_NAME = 'payment_type') = 0,
+  'ALTER TABLE dashboard_orders ADD COLUMN payment_type VARCHAR(40) NULL', 'DO 0');
+PREPARE st FROM @q; EXECUTE st; DEALLOCATE PREPARE st;
+
+SET @q = IF((SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'dashboard_orders' AND COLUMN_NAME = 'payment_channel') = 0,
+  'ALTER TABLE dashboard_orders ADD COLUMN payment_channel VARCHAR(60) NULL', 'DO 0');
+PREPARE st FROM @q; EXECUTE st; DEALLOCATE PREPARE st;
+
+SET @q = IF((SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'dashboard_orders' AND COLUMN_NAME = 'midtrans_transaction_id') = 0,
+  'ALTER TABLE dashboard_orders ADD COLUMN midtrans_transaction_id VARCHAR(64) NULL', 'DO 0');
+PREPARE st FROM @q; EXECUTE st; DEALLOCATE PREPARE st;
+
+SET @q = IF((SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'dashboard_orders' AND COLUMN_NAME = 'midtrans_token') = 0,
+  'ALTER TABLE dashboard_orders ADD COLUMN midtrans_token VARCHAR(80) NULL', 'DO 0');
+PREPARE st FROM @q; EXECUTE st; DEALLOCATE PREPARE st;
+
+SET @q = IF((SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'dashboard_orders' AND COLUMN_NAME = 'midtrans_redirect_url') = 0,
+  'ALTER TABLE dashboard_orders ADD COLUMN midtrans_redirect_url VARCHAR(255) NULL', 'DO 0');
+PREPARE st FROM @q; EXECUTE st; DEALLOCATE PREPARE st;
+
+SET @q = IF((SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'dashboard_orders' AND COLUMN_NAME = 'payment_expires_at') = 0,
+  'ALTER TABLE dashboard_orders ADD COLUMN payment_expires_at DATETIME NULL', 'DO 0');
+PREPARE st FROM @q; EXECUTE st; DEALLOCATE PREPARE st;
+
+SET @q = IF((SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'dashboard_orders' AND COLUMN_NAME = 'paid_at') = 0,
+  'ALTER TABLE dashboard_orders ADD COLUMN paid_at DATETIME NULL', 'DO 0');
+PREPARE st FROM @q; EXECUTE st; DEALLOCATE PREPARE st;
+
+SET @q = IF((SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'dashboard_orders' AND COLUMN_NAME = 'biaya_kirim') = 0,
+  'ALTER TABLE dashboard_orders ADD COLUMN biaya_kirim DECIMAL(15,2) NOT NULL DEFAULT 0', 'DO 0');
+PREPARE st FROM @q; EXECUTE st; DEALLOCATE PREPARE st;
+
+SET @q = IF((SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'dashboard_orders' AND COLUMN_NAME = 'diskon') = 0,
+  'ALTER TABLE dashboard_orders ADD COLUMN diskon DECIMAL(15,2) NOT NULL DEFAULT 0', 'DO 0');
+PREPARE st FROM @q; EXECUTE st; DEALLOCATE PREPARE st;
+
+SET @q = IF((SELECT COUNT(*) FROM information_schema.STATISTICS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'dashboard_orders' AND INDEX_NAME = 'idx_orders_payment_expiry') = 0,
+  'ALTER TABLE dashboard_orders ADD INDEX idx_orders_payment_expiry (payment_status, status, payment_expires_at)', 'DO 0');
+PREPARE st FROM @q; EXECUTE st; DEALLOCATE PREPARE st;
+
+-- Pesanan lama (sebelum Midtrans) non-COD dianggap sudah lunas. Hanya menyentuh baris yang masih bernilai bawaan 'cod',
+-- jadi aman diulang dan tidak menimpa status pembayaran yang sudah diisi gateway.
+UPDATE dashboard_orders SET payment_status = 'lunas', paid_at = created_at
+ WHERE payment_status = 'cod' AND payment_method IS NOT NULL AND UPPER(payment_method) NOT LIKE '%COD%' AND status NOT IN ('pending','dibatalkan');
+
+-- ---- order_reviews (foto & rating per komoditas) ----
+SET @q = IF((SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'order_reviews' AND COLUMN_NAME = 'photos') = 0,
+  'ALTER TABLE order_reviews ADD COLUMN photos JSON NULL', 'DO 0');
+PREPARE st FROM @q; EXECUTE st; DEALLOCATE PREPARE st;
+
+SET @q = IF((SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'order_reviews' AND COLUMN_NAME = 'item_ratings') = 0,
+  'ALTER TABLE order_reviews ADD COLUMN item_ratings JSON NULL', 'DO 0');
+PREPARE st FROM @q; EXECUTE st; DEALLOCATE PREPARE st;

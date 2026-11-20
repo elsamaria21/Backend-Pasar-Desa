@@ -22,6 +22,7 @@ const adminComplaintRoutes = require("./routes/adminComplaintRoutes");
 const uploadRoutes = require("./routes/uploadRoutes");
 const mobileOrderRoutes = require("./routes/mobileOrderRoutes");
 const cashRoutes = require("./routes/cashRoutes");
+const paymentRoutes = require("./routes/paymentRoutes");
 
 const adminProductRoutes = require("./routes/adminProductRoutes");
 const cartRoutes = require("./routes/cartRoutes");
@@ -114,6 +115,9 @@ app.use("/api/uploads", uploadRoutes);
 // Mobile orders
 app.use("/api/orders", mobileOrderRoutes);
 
+// Pembayaran Midtrans (Snap + webhook)
+app.use("/api/payments", paymentRoutes);
+
 // Additional order management
 app.use("/api/order-management", orderRoutes);
 
@@ -156,6 +160,7 @@ app.get("/", (req, res) => {
       harvests: "/api/harvests",
       categories: "/api/categories",
       orders: "/api/orders",
+      payments: "/api/payments",
       adminOrders: "/api/admin/orders",
       adminReviews: "/api/admin/reviews",
       adminComplaints: "/api/admin/complaints",

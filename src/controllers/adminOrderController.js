@@ -1,5 +1,7 @@
 const crypto = require("crypto");
 const { pool } = require("../config/database");
+const midtrans = require("../services/midtransService");
+const { MENIT_BAYAR, jenisMetode, hitungBiaya } = require("../utils/pembayaran");
 
 const STATUS = new Set(["pending", "perlu-dikemas", "diproses", "siap-jemput", "sedang-dikemas", "dikirim", "diantar", "tiba-di-pos", "komplain", "selesai", "dibatalkan"]);
 
@@ -47,7 +49,10 @@ async function bacaPesanan(db, kondisi = "", params = []) {
        address AS alamat, rt_rw AS rtRw, patokan, drop_point AS dropPoint, opsi_pengiriman AS opsiPengiriman,
        payment_method AS metodeBayar, phone AS telepon, notes AS catatan, status, total,
        tiba_di_pos_pada AS tibaDiPosPada, kurir, komplain, kirim_ulang AS kirimUlang, created_at AS dibuatPada,
-       dibatalkan_oleh AS dibatalkanOleh, alasan_batal AS alasanBatal, dibatalkan_pada AS dibatalkanPada
+       dibatalkan_oleh AS dibatalkanOleh, alasan_batal AS alasanBatal, dibatalkan_pada AS dibatalkanPada,
+       biaya_kirim AS biayaKirim, diskon, total + biaya_kirim - diskon AS totalBayar,
+       payment_status AS statusPembayaran, payment_type AS jenisPembayaran, payment_channel AS kanalPembayaran,
+       paid_at AS dibayarPada, payment_expires_at AS batasBayar
      FROM dashboard_orders ${kondisi} ORDER BY created_at DESC, id DESC`,
     params
   );
@@ -142,7 +147,14 @@ async function createOrder(req, res) {
     }
 
     const orderCode = privileged && (body.kode || body.order_code) ? body.kode || body.order_code : kodePesanan();
-    const status = privileged && STATUS.has(body.status) ? body.status : req.isMobileOrder ? "perlu-dikemas" : "pending";
+    // Pembayaran lewat Midtrans: pesanan "pending" (stok dikunci) sampai Midtrans mengonfirmasi lunas; baru lanjut "perlu-dikemas".
+    // COD dan Saldo PasarDesa tidak lewat gateway sehingga langsung "perlu-dikemas".
+    const metode = jenisMetode(body.metodeBayar || body.payment_method);
+    const lewatMidtrans = Boolean(req.isMobileOrder) && metode === "midtrans";
+    const status = privileged && STATUS.has(body.status) ? body.status : req.isMobileOrder ? (lewatMidtrans ? "pending" : "perlu-dikemas") : "pending";
+    const statusBayar = lewatMidtrans ? "menunggu" : metode === "cod" ? "cod" : "lunas";
+    // Ongkir & voucher hanya untuk pesanan dari aplikasi pembeli; dihitung server.
+    const { biayaKirim, diskon } = req.isMobileOrder ? hitungBiaya(body.opsiPengiriman || "kurir-desa", body.voucher) : { biayaKirim: 0, diskon: 0 };
     let customerName = body.pembeli || body.customer_name;
     const userId = body.userId || body.user_id || null;
     if (!customerName && userId) {
@@ -152,11 +164,12 @@ async function createOrder(req, res) {
 
     const [result] = await connection.query(`
       INSERT INTO dashboard_orders
-      (order_code, id_pembayaran, user_id, customer_name, address, rt_rw, patokan, drop_point, opsi_pengiriman, payment_method, phone, notes, status, total)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      (order_code, id_pembayaran, user_id, customer_name, address, rt_rw, patokan, drop_point, opsi_pengiriman, payment_method, phone, notes, status, total, biaya_kirim, diskon,
+       payment_status, payment_expires_at, paid_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ${lewatMidtrans ? "DATE_ADD(NOW(), INTERVAL ? MINUTE)" : "NULL"}, ${statusBayar === "lunas" ? "NOW()" : "NULL"})
     `, [orderCode, body.idPembayaran || null, userId, customerName, body.alamat || body.address || null, body.rtRw || null, body.patokan || null,
       body.dropPoint || body.drop_point || null, body.opsiPengiriman || "kurir-desa", body.metodeBayar || body.payment_method || null, body.telepon || body.phone || null,
-      body.catatan || body.notes || null, status, total]);
+      body.catatan || body.notes || null, status, total, biayaKirim, diskon, statusBayar, ...(lewatMidtrans ? [MENIT_BAYAR] : [])]);
 
     for (const item of normalized) {
       await connection.query(`
@@ -167,7 +180,7 @@ async function createOrder(req, res) {
     }
 
     await connection.commit();
-    res.status(201).json({ success: true, message: "Pesanan berhasil dibuat.", data: { id: result.insertId, kode: orderCode, total, status } });
+    res.status(201).json({ success: true, message: "Pesanan berhasil dibuat.", data: { id: result.insertId, kode: orderCode, total, biayaKirim, diskon, totalBayar: total + biayaKirim - diskon, status, paymentStatus: statusBayar, paymentExpiresInSeconds: lewatMidtrans ? MENIT_BAYAR * 60 : null } });
   } catch (error) {
     await connection.rollback();
     if (error.code === "ER_DUP_ENTRY") return res.status(409).json({ success: false, message: "Kode pesanan sudah dipakai." });
@@ -224,7 +237,7 @@ async function terapkanUpdate(kondisi, body, userId) {
     await connection.beginTransaction();
     const milik = userId ? " AND user_id = ?" : "";
     const [beforeRows] = await connection.query(
-      `SELECT id, status, total, order_code, komplain FROM dashboard_orders WHERE ${kondisi.sql}${milik} FOR UPDATE`,
+      `SELECT id, status, total, order_code, komplain, payment_status FROM dashboard_orders WHERE ${kondisi.sql}${milik} FOR UPDATE`,
       userId ? [kondisi.value, userId] : [kondisi.value]
     );
     if (!beforeRows.length) {
@@ -238,6 +251,12 @@ async function terapkanUpdate(kondisi, body, userId) {
     if (statusBaru !== undefined && !bolehPindah(before.status, statusBaru)) {
       await connection.rollback();
       return gagal(409, `Status tidak bisa berubah dari "${before.status}" ke "${statusBaru}".`);
+    }
+
+    // Pesanan yang menunggu pembayaran Midtrans hanya boleh lanjut lewat konfirmasi gateway, bukan lewat PATCH admin/aplikasi.
+    if (statusBaru !== undefined && normal(before.status) === "pending" && normal(statusBaru) === "perlu-dikemas" && before.payment_status === "menunggu") {
+      await connection.rollback();
+      return gagal(409, "Pembayaran belum lunas. Pesanan lanjut otomatis setelah Midtrans mengonfirmasi pembayaran.");
     }
 
     await connection.query(`UPDATE dashboard_orders SET ${fields.join(", ")} WHERE id = ?`, [...values, id]);
@@ -274,6 +293,11 @@ async function terapkanUpdate(kondisi, body, userId) {
     }
 
     await connection.commit();
+    // Tagihan yang belum dibayar ikut dibatalkan di Midtrans supaya tidak bisa dibayar setelah pesanan batal (best-effort).
+    if (statusBaru === "dibatalkan" && before.payment_status === "menunggu") {
+      midtrans.batalkan(before.order_code).catch((e) => console.warn("MIDTRANS CANCEL:", e.message));
+      await pool.query("UPDATE dashboard_orders SET payment_status = 'gagal' WHERE id = ? AND payment_status = 'menunggu'", [id]);
+    }
     const [terbaru] = await bacaPesanan(pool, "WHERE id = ?", [id]);
     return { code: 200, body: { success: true, message: "Pesanan diperbarui.", data: terbaru } };
   } catch (error) {

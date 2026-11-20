@@ -105,7 +105,7 @@ Semua memakai `Authorization: Bearer <token>` dari `POST /api/auth/login`, kecua
 | PATCH | `/api/orders/:id/receive` | Konfirmasi diterima, hanya saat `tiba-di-pos`; penjualan masuk kas |
 | POST | `/api/orders/:id/komplain` | `alasan` (`tidak-segar`, `tidak-sesuai-timbangan`, `kemasan-rusak`, `tidak-sesuai-pesanan`, `lainnya`), `catatan`; hanya saat `tiba-di-pos` |
 
-`:id` boleh id angka atau kode pesanan. Pembayaran QRIS/saldo di aplikasi masih simulasi; server menerima klaim "sudah dibayar" dari aplikasi tanpa verifikasi gateway.
+`:id` boleh id angka atau kode pesanan. Pembayaran QRIS/VA/e-wallet kini lewat Midtrans Snap: pesanan dibuat `pending` (`statusPembayaran: "menunggu"`) dan baru menjadi `perlu-dikemas` setelah Midtrans mengonfirmasi lunas (webhook `POST /api/payments/midtrans/notification`, diverifikasi signature). Admin tidak bisa melompatkan pesanan yang menunggu bayar. Saldo PasarDesa masih dompet di aplikasi tanpa ledger server. Respons pesanan memuat `statusPembayaran`, `jenisPembayaran`, `kanalPembayaran`, `dibayarPada`, `batasBayar`, `biayaKirim`, `diskon`, `totalBayar`.
 
 ## Pembatalan, pengaduan, dan ulasan
 

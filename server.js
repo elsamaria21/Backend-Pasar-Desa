@@ -8,6 +8,8 @@ const {
 } =
   require("./src/config/database");
 
+const { jalankanSweeper } = require("./src/controllers/paymentController");
+
 // Tolak start bila JWT_SECRET kosong/pendek/masih placeholder dari .env.example:
 // secret yang bisa ditebak membuat siapa pun mampu memalsukan token admin.
 const PLACEHOLDER_SECRETS = ["ganti_dengan_secret_sendiri", "secret", "changeme"];
@@ -28,6 +30,9 @@ const PORT =
 
 async function startServer() {
   await testConnection();
+
+  // Membatalkan pesanan yang tidak dibayar dalam batas waktu (hanya aktif bila MIDTRANS_SERVER_KEY terisi).
+  jalankanSweeper();
 
   app.listen(
     PORT,

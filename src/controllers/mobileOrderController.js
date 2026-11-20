@@ -1,5 +1,7 @@
 const { pool } = require("../config/database");
 const { createOrder, restoreStock, terapkanUpdate, kondisiId } = require("./adminOrderController");
+const midtrans = require("../services/midtransService");
+const { terapkanStatusPembayaran } = require("./paymentController");
 
 const { normalisasiFoto } = require("../utils/evidence");
 
@@ -10,7 +12,8 @@ async function listMyOrders(req, res) {
     const [rows] = await pool.query(`
       SELECT o.id, o.order_code AS order_code, o.user_id, o.customer_name, o.address, o.rt_rw, o.patokan, o.drop_point, o.opsi_pengiriman,
         o.payment_method, o.phone, o.notes, o.status, o.total, o.kurir, o.komplain, o.tiba_di_pos_pada, o.created_at,
-        o.alasan_batal, o.dibatalkan_oleh, r.rating AS ulasan_rating
+        o.alasan_batal, o.dibatalkan_oleh, o.biaya_kirim, o.diskon, o.total + o.biaya_kirim - o.diskon AS total_bayar, o.payment_status, o.payment_type, o.payment_channel, o.paid_at,
+        TIMESTAMPDIFF(SECOND, NOW(), o.payment_expires_at) AS payment_expires_in, r.rating AS ulasan_rating
       FROM dashboard_orders o LEFT JOIN order_reviews r ON r.order_id = o.id
       WHERE o.user_id = ? ORDER BY o.created_at DESC, o.id DESC
     `, [req.user.id]);
@@ -48,6 +51,29 @@ async function getMyOrder(req, res) {
 // :id boleh id angka atau kode pesanan (app mobile memakai kode, mis. PSD-1793...).
 async function cancelMyOrder(req, res) {
   const k = kondisiId(req.params.id);
+
+  // Tagihan Midtrans yang masih menunggu: pastikan belum dibayar sebelum dibatalkan, lalu batalkan juga di Midtrans.
+  try {
+    const [cek] = await pool.query(
+      "SELECT order_code, payment_status, midtrans_token FROM dashboard_orders WHERE " + k.sql + " AND user_id = ? LIMIT 1",
+      [k.value, req.user.id]
+    );
+    const o = cek[0];
+    if (o && o.payment_status === "lunas" && o.midtrans_token) {
+      return res.status(409).json({ success: false, message: "Pesanan sudah dibayar. Hubungi BUMDes untuk pembatalan dan pengembalian dana." });
+    }
+    if (o && o.payment_status === "menunggu" && o.midtrans_token) {
+      const data = await midtrans.cekStatus(o.order_code);
+      if (data?.transaction_status && ["settlement", "capture"].includes(data.transaction_status)) {
+        await terapkanStatusPembayaran(o.order_code, data, "sinkron");
+        return res.status(409).json({ success: false, message: "Pembayaran Anda baru saja diterima, pesanan tidak bisa dibatalkan." });
+      }
+      await midtrans.batalkan(o.order_code).catch((e) => console.warn("MIDTRANS CANCEL:", e.message));
+    }
+  } catch (e) {
+    console.warn("MOBILE CANCEL (cek Midtrans):", e.message); // Midtrans tak terjangkau: pembatalan lokal tetap diproses
+  }
+
   const connection = await pool.getConnection();
   try {
     await connection.beginTransaction();
@@ -62,7 +88,7 @@ async function cancelMyOrder(req, res) {
     // Alasan pembatalan dari pembeli tersimpan agar terlihat di dashboard admin.
     const alasan = String(req.body?.alasan || "").trim().slice(0, 255) || null;
     await connection.query(
-      "UPDATE dashboard_orders SET status = 'dibatalkan', dibatalkan_oleh = 'pembeli', alasan_batal = ?, dibatalkan_pada = NOW() WHERE id = ?",
+      "UPDATE dashboard_orders SET status = 'dibatalkan', dibatalkan_oleh = 'pembeli', alasan_batal = ?, dibatalkan_pada = NOW(), payment_status = IF(payment_status = 'menunggu', 'gagal', payment_status) WHERE id = ?",
       [alasan, rows[0].id]
     );
     await restoreStock(connection, rows[0].id); // stok yang dipesan dikembalikan

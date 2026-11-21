@@ -2,10 +2,6 @@ const express = require("express");
 const cors = require("cors");
 const path = require("path");
 
-// =====================================================
-// IMPORT ROUTES
-// =====================================================
-
 const authRoutes = require("./routes/authRoutes");
 const productRoutes = require("./routes/productRoutes");
 const aiRoutes = require("./routes/aiRoutes");
@@ -24,18 +20,8 @@ const cartRoutes = require("./routes/cartRoutes");
 const orderRoutes = require("./routes/orderRoutes");
 const userRoutes = require("./routes/userRoutes");
 
-// =====================================================
-// INITIALIZE APP
-// =====================================================
-
 const app = express();
 
-// =====================================================
-// MIDDLEWARE
-// =====================================================
-
-// CORS_ORIGIN = daftar origin dipisah koma (mis. https://dashboard.example.com).
-// Kosong = semua origin diizinkan (hanya nyaman untuk pengembangan; API memakai token Bearer, bukan cookie).
 const corsOrigins = (process.env.CORS_ORIGIN || "").split(",").map((o) => o.trim()).filter(Boolean);
 
 app.use(
@@ -52,84 +38,39 @@ app.use(
   })
 );
 
-// =====================================================
-// STATIC UPLOADS
-// =====================================================
-
 app.use(
   "/uploads",
   express.static(path.join(__dirname, "../uploads"))
 );
 
-// =====================================================
-// AUTHENTICATION
-// =====================================================
 
 app.use("/api/auth", authRoutes);
-
-// =====================================================
-// PRODUCTS
-// =====================================================
 
 app.use("/api/products", productRoutes);
 app.use("/api/admin/products", adminProductRoutes);
 
-// =====================================================
-// AI AND SEARCH
-// =====================================================
-
 app.use("/api/ai", aiRoutes);
 app.use("/api/search", searchRoutes);
 
-// =====================================================
-// DASHBOARD
-// =====================================================
 
 app.use("/api/dashboard", dashboardRoutes);
 app.use("/api/mobile/dashboard", dashboardRoutes);
 
-// =====================================================
-// HARVESTS AND CATEGORIES
-// =====================================================
-
 app.use("/api/harvests", harvestRoutes);
 app.use("/api/categories", categoryRoutes);
 
-// =====================================================
-// ORDERS
-// =====================================================
-
-// Admin orders
 app.use("/api/admin/orders", adminOrderRoutes);
 
-// Mobile orders
 app.use("/api/orders", mobileOrderRoutes);
 
 // Additional order management
 app.use("/api/order-management", orderRoutes);
 
-// =====================================================
-// CART
-// =====================================================
-
 app.use("/api/cart", cartRoutes);
-
-// =====================================================
-// CASH TRANSACTIONS
-// =====================================================
 
 app.use("/api/admin/cash", cashRoutes);
 app.use("/api/cash", cashRoutes);
-
-// =====================================================
-// USER PROFILE
-// =====================================================
-
 app.use("/api/users", userRoutes);
-
-// =====================================================
-// HOME / API INFORMATION
-// =====================================================
 
 app.get("/", (req, res) => {
   res.json({
@@ -157,10 +98,6 @@ app.get("/", (req, res) => {
   });
 });
 
-// =====================================================
-// 404 - ROUTE NOT FOUND
-// =====================================================
-
 app.use((req, res) => {
   res.status(404).json({
     success: false,
@@ -169,10 +106,6 @@ app.use((req, res) => {
     method: req.method,
   });
 });
-
-// =====================================================
-// ERROR HANDLER
-// =====================================================
 
 app.use((error, req, res, next) => {
   console.error(error);
@@ -197,14 +130,8 @@ app.use((error, req, res, next) => {
   return res.status(500).json({
     success: false,
     message: "Terjadi kesalahan server.",
-    // Detail galat hanya untuk pengembangan; jangan bocor ke klien di produksi.
     ...(process.env.NODE_ENV === "production" ? {} : { error: error.message }),
   });
 });
 
-// =====================================================
-// EXPORT APP
-// =====================================================
-
 module.exports = app;
-
